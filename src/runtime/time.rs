@@ -8,7 +8,6 @@ use crate::runtime::event::{Event, EventKind, EventMeta};
 
 pub struct TimeActor {
     interval: Duration,
-    tick: u64,
     beat: Option<JoinHandle<()>>,
 }
 
@@ -16,7 +15,6 @@ impl TimeActor {
     pub fn new(interval: Duration) -> Self {
         Self {
             interval,
-            tick: 0,
             beat: None,
         }
     }
@@ -37,21 +35,15 @@ impl CognitiveActor for TimeActor {
             if let Some(beat) = &self.beat {
                 beat.abort();
             }
-            self.tick += 1;
             let bus = ctx.bus();
             let interval = self.interval;
             let cycle_id = meta.cycle_id;
-            let mut tick = self.tick;
             self.beat = Some(tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(interval).await;
                     bus.publish(Event::Tick {
-                        meta: EventMeta {
-                            cycle_id,
-                            timestamp: tick,
-                        },
+                        meta: EventMeta { cycle_id },
                     });
-                    tick += 1;
                 }
             }));
         }
@@ -71,7 +63,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 

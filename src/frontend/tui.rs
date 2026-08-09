@@ -191,7 +191,17 @@ async fn run_loop(
                                 && let Some(text) = assistant_text(ui)
                                 && let Ok(mut app) = app.try_lock()
                             {
-                                app.note_assistant_turn(&text);
+                                let index = ui.messages.iter().rposition(|message| {
+                                    matches!(
+                                        message,
+                                        UiMessage::Assistant { content, .. }
+                                            if !content.is_empty()
+                                    )
+                                });
+                                if ui.last_recorded_assistant_index != index {
+                                    app.note_assistant_turn(&text);
+                                    ui.last_recorded_assistant_index = index;
+                                }
                             }
                             let tool_call = match messages::handle_event(ui, event) {
                                     Some(Event::ActionSelected { decision, .. }) => {

@@ -641,7 +641,10 @@ mod tests {
             "deepseek-v4-pro",
             vec![Message::user(MessageContent::parts(vec![
                 ContentPart::text("look"),
-                ContentPart::image_url("https://example.com/a.png", crate::adapter::types::ImageDetail::Low),
+                ContentPart::ImageUrl {
+                    url: "https://example.com/a.png".into(),
+                    detail: crate::adapter::types::ImageDetail::Low,
+                },
             ]))],
         );
         let err = WireDeepSeekChatCompletionRequest::from_request(&request, None).unwrap_err();

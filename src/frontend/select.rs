@@ -232,6 +232,14 @@ pub fn status_lines(
     rows.push(StatusRow {
         title: true,
         color: theme::PINK,
+        text: "◆ Drives".to_string(),
+    });
+    rows.push(signal_row("homeostatic", cognitive.drive_homeostatic, theme::GREEN));
+    rows.push(signal_row("curiosity", cognitive.drive_curiosity, theme::PURPLE));
+    rows.push(signal_row("salience", cognitive.drive_salience, theme::GOLD));
+    rows.push(StatusRow {
+        title: true,
+        color: theme::PINK,
         text: "◆ Prediction & Error".to_string(),
     });
     rows.push(signal_row(
@@ -286,7 +294,10 @@ pub fn status_lines(
     rows.push(StatusRow {
         title: false,
         color: theme::META,
-        text: format!("trace records: {}", ctx.traces_len),
+        text: format!(
+            "trace records: {} · /trace shows the latest 15",
+            ctx.traces_len
+        ),
     });
     rows
 }

@@ -207,8 +207,29 @@ pub fn format_traces(traces: &[TraceRecord]) -> String {
                 },
                 None => "no decision".to_string(),
             };
+            let modulation = trace
+                .modulation
+                .as_ref()
+                .map(|m| {
+                    let effort = m
+                        .reasoning_effort
+                        .map(|e| format!("{e:?}"))
+                        .unwrap_or_else(|| "default".to_string());
+                    format!(" mod {effort}")
+                })
+                .unwrap_or_default();
+            let retrieval = trace
+                .retrieval
+                .as_ref()
+                .map(|r| format!(" · mem: {r}"))
+                .unwrap_or_default();
+            let writes = if trace.memory_writes.is_empty() {
+                String::new()
+            } else {
+                format!(" · wrote: {}", trace.memory_writes.join(","))
+            };
             format!(
-                "#{} {error} · {prediction}{sentiment}{reaction} · {decision}",
+                "#{} {error} · {prediction}{sentiment}{reaction}{modulation} · {decision}{retrieval}{writes}",
                 trace.cycle_id.0
             )
         })
@@ -271,10 +292,14 @@ mod tests {
 
     #[test]
     fn format_traces_renders_recent_lines() {
+        use crate::adapter::types::ReasoningEffort;
         use crate::runtime::types::{ActionDecision, CycleId};
         let traces = vec![TraceRecord {
             cycle_id: CycleId(3),
-            modulation: None,
+            modulation: Some(crate::runtime::types::ModulationContext {
+                reasoning_effort: Some(ReasoningEffort::High),
+                ..Default::default()
+            }),
             error_before: Some(0.4),
             error_after: Some(0.1),
             decision: Some(ActionDecision {
@@ -287,7 +312,8 @@ mod tests {
                 confidence: 0.8,
                 go: true,
             }),
-            retrieval: None,
+            retrieval: Some("episodic: asked about weather".into()),
+            memory_writes: vec!["episodic s0.52".into()],
             prediction_direction: Some(0.3),
             prediction_sentiment: Some(0.2),
             prediction_reaction: Some("surprised".into()),
@@ -299,6 +325,9 @@ mod tests {
         assert!(text.contains("sent +0.20"), "{text}");
         assert!(text.contains("(surprised)"), "{text}");
         assert!(text.contains("tool read_file"), "{text}");
+        assert!(text.contains("mod High"), "{text}");
+        assert!(text.contains("mem: episodic: asked about weather"), "{text}");
+        assert!(text.contains("wrote: episodic s0.52"), "{text}");
     }
 
     #[test]

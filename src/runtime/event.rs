@@ -1,16 +1,15 @@
 use crate::adapter::types::{CompletionChunk, TokenUsage};
 use crate::runtime::types::{
-    ActionDecision, AttentionFocus, CognitiveMode, CycleId, CycleSummary, DriveState,
-    EmotionState, GenerateRequest, InhibitionSignal, IntentKind, MemoryKind, MemoryRetrieval,
-    MetaState, ModulationContext, ModulatorState, PerceptionFeatures, PerceptionPayload,
-    PredictionError, PredictionTrajectory, RpeSignal, RuleContext, SkillContext, TaskSetState,
-    ToolResult, WorkingMemorySnapshot,
+    ActionDecision, AttentionFocus, CognitiveMode, CycleId, CycleSummary, DialogueTurn,
+    DriveState, EmotionState, GenerateRequest, InhibitionSignal, IntentKind, MemoryKind,
+    MemoryRetrieval, MetaState, ModulationContext, ModulatorState, PerceptionFeatures,
+    PerceptionPayload, PredictionError, PredictionTrajectory, RpeSignal, RuleContext,
+    SkillContext, TaskSetState, ToolResult, WorkingMemorySnapshot,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EventMeta {
     pub cycle_id: CycleId,
-    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,7 +52,7 @@ impl Event {
             | Event::EmotionUpdate { .. }
             | Event::MetaUpdate { .. }
             | Event::Modulate { .. } => EventKind::Modulation,
-            Event::WorkingMemoryUpdate { .. } => EventKind::WorkingMemory,
+            Event::WorkingMemoryUpdate { .. } | Event::RestoreDialogue { .. } => EventKind::WorkingMemory,
             Event::MemoryRetrieved { .. } | Event::MemoryWrite { .. } => EventKind::Memory,
             Event::DriveUpdate { .. } => EventKind::Drive,
             Event::TaskSetUpdate { .. } => EventKind::TaskSet,
@@ -86,6 +85,7 @@ impl Event {
             | Event::EmotionUpdate { meta, .. }
             | Event::MetaUpdate { meta, .. }
             | Event::WorkingMemoryUpdate { meta, .. }
+            | Event::RestoreDialogue { meta, .. }
             | Event::MemoryRetrieved { meta, .. }
             | Event::MemoryWrite { meta, .. }
             | Event::DriveUpdate { meta, .. }
@@ -177,6 +177,10 @@ pub enum Event {
     WorkingMemoryUpdate {
         meta: EventMeta,
         snapshot: WorkingMemorySnapshot,
+    },
+    RestoreDialogue {
+        meta: EventMeta,
+        turns: Vec<DialogueTurn>,
     },
     MemoryRetrieved {
         meta: EventMeta,

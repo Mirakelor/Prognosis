@@ -110,7 +110,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 

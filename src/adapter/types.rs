@@ -269,10 +269,6 @@ impl Message {
         }
     }
 
-    pub fn assistant_with_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
-        Self::assistant_with_tool_calls_and_reasoning(String::new(), tool_calls, None)
-    }
-
     pub fn assistant_with_tool_calls_and_reasoning(
         content: String,
         tool_calls: Vec<ToolCall>,

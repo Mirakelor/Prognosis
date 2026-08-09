@@ -178,6 +178,8 @@ impl CognitiveActor for LongTermMemoryActor {
             }
             Event::CycleComplete { meta, summary } => {
                 let rpe = summary.rpe.unwrap_or(0.0);
+                let surprise = summary.error.unwrap_or(0.0) * 0.3
+                    + summary.uncertainty.unwrap_or(0.0) * 0.2;
                 let memory = EpisodicMemory {
                     id: self.next_id,
                     cycle_id: meta.cycle_id,
@@ -186,7 +188,7 @@ impl CognitiveActor for LongTermMemoryActor {
                         valence: rpe.clamp(-1.0, 1.0),
                         arousal: rpe.abs(),
                     },
-                    strength: 0.2 + rpe.abs(),
+                    strength: (0.2 + rpe.abs() + surprise).clamp(0.0, 1.0),
                 };
                 self.next_id += 1;
                 let consolidated = self.consolidate(&memory);
@@ -244,7 +246,7 @@ mod tests {
     fn meta(cycle: u64) -> EventMeta {
         EventMeta {
             cycle_id: CycleId(cycle),
-            timestamp: 0,
+
         }
     }
 
@@ -284,6 +286,49 @@ mod tests {
         assert_eq!(episodic.len(), 2);
         assert!(episodic[0].strength > episodic[1].strength);
         assert_eq!(episodic[0].emotion.valence, 0.8);
+    }
+
+    #[tokio::test]
+    async fn error_and_uncertainty_boost_memory_strength() {
+        let bus = EventBus::new(16);
+        let actor = LongTermMemoryActor::new();
+        let episodic_handle = actor.episodic();
+        let (_h, ready) = spawn_actor(bus.clone(), actor);
+        ready.await.unwrap();
+
+        bus.publish(cycle_complete(1, 0.0, "calm round"));
+        bus.publish(Event::CycleComplete {
+            meta: meta(2),
+            summary: CycleSummary {
+                rpe: Some(0.0),
+                error: Some(1.0),
+                uncertainty: Some(1.0),
+                decision: Some(ActionDecision {
+                    candidate: ActionCandidate::Respond {
+                        content: "surprising round".into(),
+                    },
+                    confidence: 0.9,
+                    go: true,
+                }),
+                modulation: None,
+                user_input: Some("unexpected input".into()),
+            },
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let episodic = episodic_handle.lock().unwrap();
+        assert_eq!(episodic.len(), 2);
+        assert!(
+            episodic[1].strength > episodic[0].strength,
+            "surprise must strengthen encoding: {} vs {}",
+            episodic[1].strength,
+            episodic[0].strength
+        );
+        assert!(
+            (episodic[1].strength - 0.7).abs() < 0.001,
+            "0.2 base + 0.3 error + 0.2 uncertainty = 0.7, got {}",
+            episodic[1].strength
+        );
     }
 
     #[tokio::test]

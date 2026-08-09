@@ -91,6 +91,7 @@ impl CognitiveActor for WorkingMemoryActor {
             EventKind::Time,
             EventKind::Cycle,
             EventKind::Context,
+            EventKind::WorkingMemory,
         ]
     }
 
@@ -105,6 +106,16 @@ impl CognitiveActor for WorkingMemoryActor {
             }
             Event::CompactContext { meta, .. } | Event::ConversationCleared { meta } => {
                 self.dialogue.clear();
+                vec![Event::WorkingMemoryUpdate {
+                    meta: *meta,
+                    snapshot: self.snapshot(),
+                }]
+            }
+            Event::RestoreDialogue { meta, turns } => {
+                self.dialogue = turns.clone();
+                if self.dialogue.len() > MAX_DIALOGUE {
+                    self.dialogue.drain(..self.dialogue.len() - MAX_DIALOGUE);
+                }
                 vec![Event::WorkingMemoryUpdate {
                     meta: *meta,
                     snapshot: self.snapshot(),
@@ -211,7 +222,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 
@@ -363,6 +374,36 @@ mod tests {
                 _ => continue,
             }
         }
+    }
+
+    #[tokio::test]
+    async fn restore_dialogue_loads_history_through_bus() {
+        let bus = EventBus::new(16);
+        let (_h, ready) = spawn_actor(bus.clone(), WorkingMemoryActor::new());
+        ready.await.unwrap();
+        let mut rx = Box::pin(bus.subscribe_kinds(&[EventKind::WorkingMemory]));
+
+        bus.publish(Event::RestoreDialogue {
+            meta: meta(),
+            turns: vec![crate::runtime::types::DialogueTurn {
+                user: "question".into(),
+                assistant: "answer".into(),
+            }],
+        });
+
+        let update = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match rx.next().await.unwrap() {
+                    Event::WorkingMemoryUpdate { snapshot, .. } => return snapshot,
+                    _ => continue,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(update.dialogue.len(), 1);
+        assert_eq!(update.dialogue[0].user, "question");
+        assert_eq!(update.dialogue[0].assistant, "answer");
     }
 
     #[tokio::test]

@@ -35,7 +35,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--supervisor" => supervisor = args.next(),
             "--help" => {
                 println!(
-                    "usage: prognosis [--adapter openai|deepseek] [--model NAME] [--supervisor on|off]"
+                    "usage: prognosis [OPTIONS]\n\
+                     \n\
+                     Options:\n\
+                     \x20 --adapter <openai|deepseek>  LLM adapter (default: auto-detected from DEEPSEEK_API_KEY / OPENAI_API_KEY, falls back to deepseek)\n\
+                     \x20 --model <NAME>               Initial model name (overrides the stored default model)\n\
+                     \x20 --supervisor <on|off>        LLM supervisor that reviews tool calls before they run (default: on)\n\
+                     \x20 --help                       Show this help and exit\n\
+                     \n\
+                     Interactive commands (type / inside the TUI):\n\
+                     \x20 models  compact  approvals  status  task  rules  skills  history\n\
+                     \x20 continue  remember  resume <id>  trace  supervisor  clear  help"
                 );
                 return Ok(());
             }

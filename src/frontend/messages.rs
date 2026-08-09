@@ -95,6 +95,10 @@ pub fn handle_event(ui: &mut UiState, event: Event) -> Option<Event> {
             crate::frontend::state::apply_emotion(ui, &emotion);
             None
         }
+        Event::DriveUpdate { drives, .. } => {
+            crate::frontend::state::apply_drive(ui, &drives);
+            None
+        }
         Event::MetaUpdate { meta_state, .. } => {
             crate::frontend::state::apply_meta(ui, &meta_state);
             None
@@ -141,7 +145,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 
@@ -273,6 +277,22 @@ mod tests {
             UiMessage::System { content } => assert!(content.contains("Conversation cleared")),
             _ => panic!("expected system message"),
         }
+    }
+
+    #[test]
+    fn drive_update_populates_cognitive_snapshot() {
+        let mut ui = UiState::new();
+        handle_event(&mut ui, Event::DriveUpdate {
+            meta: meta(),
+            drives: crate::runtime::types::DriveState {
+                homeostatic: 0.7,
+                curiosity: 0.4,
+                salience: 0.9,
+            },
+        });
+        assert_eq!(ui.cognitive.drive_homeostatic, 0.7);
+        assert_eq!(ui.cognitive.drive_curiosity, 0.4);
+        assert_eq!(ui.cognitive.drive_salience, 0.9);
     }
 
     #[test]

@@ -59,7 +59,7 @@ mod tests {
     fn meta() -> crate::runtime::event::EventMeta {
         crate::runtime::event::EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 

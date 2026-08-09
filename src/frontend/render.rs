@@ -292,6 +292,27 @@ fn render_rows(ui: &UiState, width: usize) -> Vec<Line<'static>> {
                         }
                         continue;
                     }
+                    if markdown_line.heading {
+                        let text = markdown_line.spans[0].text.clone();
+                        let wrapped = wrap_text(&text, width.saturating_sub(4));
+                        for (index, line) in wrapped.iter().enumerate() {
+                            if index == 0 {
+                                rows.push(Line::from(vec![
+                                    Span::styled("  ▍", theme::GOLD),
+                                    Span::styled(
+                                        line.clone(),
+                                        theme::text_style().bold().fg(theme::GOLD),
+                                    ),
+                                ]));
+                            } else {
+                                rows.push(Line::from(Span::styled(
+                                    format!("    {line}"),
+                                    theme::text_style().bold().fg(theme::GOLD),
+                                )));
+                            }
+                        }
+                        continue;
+                    }
                     let spans = wrap_spans(&markdown_line.spans, width.saturating_sub(2));
                     for wrapped in spans {
                         let mut styled = Vec::new();

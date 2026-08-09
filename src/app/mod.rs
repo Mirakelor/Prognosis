@@ -13,8 +13,8 @@ use crate::adapter::types::ToolDefinition;
 use crate::runtime::event::{Event, EventMeta};
 use crate::runtime::ports::{LlmAdapter, LlmPort};
 use crate::runtime::types::{
-    CycleId, GenerateRequest, ModulationContext, PerceptionPayload, PerceptionSource,
-    TaskSetState, ToolResult,
+    CycleId, DialogueTurn, GenerateRequest, ModulationContext, PerceptionPayload,
+    PerceptionSource, TaskSetState, ToolResult,
 };
 use crate::runtime::Runtime;
 
@@ -145,7 +145,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
     match name {
         "read_file" => (
             Some(
-                "Read the contents of an existing file in the workspace. Always read a file (or the relevant part of it) before editing it, and re-read it after a previous edit changed the file. The path can be relative to the project root, absolute, a tilde path (~/...), or a file:// URI. Returns an error message if the file does not exist or cannot be read.".into(),
+                "Read the contents of an existing file in the workspace and return them with line numbers. Use this before editing a file, before quoting from a file, and whenever you need to know what the file actually contains — never guess file contents from memory or from an earlier version. Re-read a file after a previous edit changed it, so your edits always apply to current content; the file may have changed since you last saw it.\n\nBehavior:\n- Output includes line numbers, so you can refer to specific lines (\"around line 42\") in follow-up calls.\n- Large files are read in full; if the output is very long, prefer reading the relevant part or using grep_search first to locate the section you need.\n- The path can be relative to the project root, absolute, a tilde path (~/...), or a file:// URI.\n- If the file does not exist or cannot be read, the tool returns an explicit error message instead of guessing content.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -157,7 +157,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "create_new_file" => (
             Some(
-                "Create a brand-new file with the given contents. Use this tool ONLY when the file does not exist yet — never to overwrite an existing file; if the file already exists, use edit_existing_file or single_find_and_replace instead. The parent directory is created automatically when needed.".into(),
+                "Create a brand-new file with the given contents. Use this tool ONLY when the file does not exist yet — never to overwrite an existing file; if the file already exists, use edit_existing_file or single_find_and_replace instead.\n\nBehavior:\n- The parent directory is created automatically when needed.\n- The contents are written exactly as provided; do not include markdown fences or explanatory text in the contents argument.\n- If a file already exists at the path, the call is rejected — check with ls or read_file first when you are unsure whether the file exists.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -181,7 +181,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "file_glob_search" => (
             Some(
-                "Search for files by name or path pattern recursively across the project, using glob syntax. '**' matches any number of directories (e.g. 'src/**/tests/*.rs'). Build, cache, and dependency directories (target, node_modules, .git, etc.) are excluded — use ls to inspect those. Results may be truncated; prefer targeted patterns over broad ones like '*'.".into(),
+                "Search for files by name or path pattern recursively across the project, using glob syntax. Use this to locate a file when you know part of its name or path but not its exact location (e.g. find the test file for a module, locate a config file).\n\nBehavior:\n- '**' matches any number of directories (e.g. 'src/**/tests/*.rs').\n- Build, cache, and dependency directories (target, node_modules, .git, etc.) are excluded — use ls to inspect those.\n- Results may be truncated; prefer targeted patterns over broad ones like '*'. If a broad pattern returns nothing useful, narrow it with the directory you expect the file in.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -192,12 +192,12 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
             }),
         ),
         "view_diff" => (
-            Some("Show the uncommitted working-tree changes (git diff) of the project. Use this before summarizing what changed, writing a commit message, or reviewing your own edits. If the project is not a git repository, returns a friendly notice instead of an error.".into()),
+            Some("Show the uncommitted working-tree changes (git diff) of the project — the exact lines you added and removed, with file names. Use this before summarizing what changed, before writing a commit message, and to review your own edits after a task so you can confirm only the intended lines were touched.\n\nBehavior:\n- Read-only: it never modifies files or the git index.\n- Diff blocks are folded in the UI for large changes; the full detail is available when expanded.\n- If the project is not a git repository, returns a friendly notice instead of an error.".into()),
             serde_json::json!({"type": "object"}),
         ),
         "ls" => (
             Some(
-                "List the contents of a directory. Use this to discover the project layout or confirm what a directory contains before reading or editing files. Paths can be relative to the project root, absolute, or tilde paths. With recursive=true the whole subtree is listed — use it sparingly on large trees because output can be long.".into(),
+                "List the contents of a directory with file names and sizes. Use this to discover the project layout, confirm what a directory contains, or find where a file lives before reading or editing it. Call it on the project root first when you start a task in an unfamiliar workspace — the listing tells you which files exist and what to read next.\n\nBehavior:\n- Paths can be relative to the project root, absolute, or tilde paths.\n- With recursive=true the whole subtree is listed — use it sparingly on large trees (node_modules, build output) because the output can be very long.\n- If the directory does not exist or cannot be read, returns an explicit error message.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -225,7 +225,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "fetch_url_content" => (
             Some(
-                "Fetch and view the text content of a public web page by URL. Use this when the answer needs current, external information that is not in the project and not in your training data. Do NOT use it for local files — use read_file for those. Some sites block automated fetches; if a fetch fails, try search_web first to find an alternative source.".into(),
+                "Fetch and view the text content of a public web page by URL. Use this when the answer needs current, external information that is not in the project and not in your training data — for example a library's current version, an API change, or a public announcement.\n\nBehavior:\n- The page is fetched over the network and returned as plain text; interactive or heavily scripted pages may return little content.\n- Do NOT use it for local files — use read_file for those.\n- Only fetch public, non-sensitive URLs; the request is visible to the site owner.\n- Some sites block automated fetches; if a fetch fails, try search_web first to find an alternative source.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -257,7 +257,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "search_web" => (
             Some(
-                "Search the web and return top results with titles, URLs, and snippets. Use this only when the answer requires specialized, external, or up-to-date knowledge that is not in the project and not in your training data (e.g. current events, library versions, documentation changes). Common programming questions about the code in this project do NOT require a web search — read the code instead. If a result page itself is needed, follow up with fetch_url_content.".into(),
+                "Search the web and return top results with titles, URLs, and snippets. Use this only when the answer requires specialized, external, or up-to-date knowledge that is not in the project and not in your training data (e.g. current events, library versions, documentation changes). Common programming questions about the code in this project do NOT require a web search — read the code instead.\n\nBehavior:\n- Results come from a web search index; snippets are summaries, not full pages — if a result page itself is needed, follow up with fetch_url_content.\n- Prefer official sources (documentation, package registries, the project's own site) over forums and blogs when they are available.\n- If the search returns nothing relevant, rephrase the query with different terms rather than repeating it verbatim.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -295,7 +295,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "grep_search" => (
             Some(
-                "Search file contents across the project with a regular expression (ripgrep). Use this to find where a symbol is defined, used, or referenced, or to locate code matching a pattern. Build, cache, and dependency directories are excluded. Results may be truncated — narrow the pattern (e.g. 'fn handle_call_tool' or 'trait Lang.*Adapter') instead of using a broad term.".into(),
+                "Search file contents across the project with a regular expression (ripgrep). Use this to find where a symbol is defined, used, or referenced, or to locate code matching a pattern — it is the fastest way to answer questions like \"where is this function called?\" or \"which files use this constant?\".\n\nBehavior:\n- The query is a regex; use alternation (e.g. 'word1|word2|word3') or character classes to find multiple potential spellings in a single search.\n- Build, cache, and dependency directories are excluded.\n- Results may be truncated — narrow the pattern (e.g. 'fn handle_call_tool' or 'trait Lang.*Adapter') instead of using a broad term.\n- The pattern is passed directly to ripgrep, not to a shell, so no quoting or escaping for the shell is needed.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -334,7 +334,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "cancel_task" => (
             Some(
-                "Cancel a previously scheduled task by its id. Use this when a scheduled or monitor task should no longer run. Fails if no task with the given id exists.".into(),
+                "Cancel a previously scheduled task by its id. Use this when a scheduled or monitor task should no longer run — for example the user changed their mind, or the condition it was waiting for became irrelevant.\n\nBehavior:\n- The id is the number returned by schedule_task (shown in the task list as #id).\n- Only tasks that have not fired yet can be cancelled; a delay task that already triggered, or a monitor task that already matched, is no longer cancellable.\n- Returns an explicit error if no task with the given id exists — check the task list first if unsure.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -783,6 +783,41 @@ fn truncate(text: &str, limit: usize) -> String {
     }
 }
 
+fn pair_dialogue(turns: &[crate::app::remember::ConversationTurn]) -> Vec<DialogueTurn> {
+    let mut dialogue = Vec::new();
+    let mut user: Option<String> = None;
+    let mut assistant_parts: Vec<String> = Vec::new();
+    for turn in turns {
+        match turn.role.as_str() {
+            "user" => {
+                if let Some(user) = user.take()
+                    && !assistant_parts.is_empty()
+                {
+                    dialogue.push(DialogueTurn {
+                        user,
+                        assistant: assistant_parts.join("\n"),
+                    });
+                }
+                assistant_parts.clear();
+                user = Some(turn.content.clone());
+            }
+            "assistant" if user.is_some() && !turn.content.trim().is_empty() => {
+                assistant_parts.push(turn.content.clone());
+            }
+            _ => {}
+        }
+    }
+    if let Some(user) = user
+        && !assistant_parts.is_empty()
+    {
+        dialogue.push(DialogueTurn {
+            user,
+            assistant: assistant_parts.join("\n"),
+        });
+    }
+    dialogue
+}
+
 fn missing_required_argument(
     name: &str,
     arguments: &serde_json::Value,
@@ -994,12 +1029,13 @@ impl App {
         if turns.is_empty() {
             return Err(format!("session #{id} not found"));
         }
-        let transcript = turns
-            .iter()
-            .map(|turn| format!("{}: {}", turn.role, turn.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.inject_context(&format!("(Session #{id} resumed)\n{transcript}"));
+        let dialogue = pair_dialogue(&turns);
+        let meta = self.next_meta();
+        self.runtime
+            .publish(Event::RestoreDialogue { meta, turns: dialogue });
+        self.inject_context(&format!(
+            "(Session #{id} resumed — the full conversation history is loaded; continue the earlier work.)"
+        ));
         self.remember.set_current(id);
         Ok(format!("resumed session #{id} ({} turns)", turns.len()))
     }
@@ -1110,12 +1146,6 @@ impl App {
         self.pending_tool.front().map(|(name, _, _)| name.clone())
     }
 
-    pub fn pending_tool_args(&self) -> Option<String> {
-        self.pending_tool
-            .front()
-            .map(|(_, args, _)| args.to_string())
-    }
-
     pub fn cancel_generation(&mut self) {
         let meta = self.next_meta();
         self.runtime.publish(Event::CancelGeneration { meta });
@@ -1189,7 +1219,7 @@ impl App {
         self.cycle += 1;
         EventMeta {
             cycle_id: CycleId(self.cycle),
-            timestamp: 0,
+
         }
     }
 
@@ -1643,6 +1673,7 @@ impl App {
 \n- Drop: greetings, chit-chat, tool call details, repeated restatements.\
 \n- Preserve the language of the conversation; if the conversation mixes languages, follow the dominant one.\
 \n- Do not invent anything not present in the conversation; if something is unresolved, say it is unresolved rather than smoothing it over.\
+\n- Aim for one dense paragraph (roughly 5-15 sentences depending on conversation size); the goal is that a reader who never saw the conversation can continue the work from this paragraph alone.\
 \n- Reply with the summary text only, no preface, no JSON.";
         let summary = match self
             .call_llm(prompt, &transcript)
@@ -1805,7 +1836,12 @@ mod tests {
         let port: Arc<dyn LlmPort> = Arc::new(MockPort);
         let adapter: Arc<dyn LanguageModelAdapter> = Arc::new(MockAdapter);
         let switchable = Arc::new(SwitchableAdapter::new(adapter));
-        App::from_port(port, switchable, &config).unwrap()
+        let mut app = App::from_port(port, switchable, &config).unwrap();
+        let models_dir = config.project_dir.join("test_models");
+        app.models_store = models::ModelsStore::load(&models_dir);
+        app.model_store_dir = models_dir;
+        app.current_model = String::new();
+        app
     }
 
     #[tokio::test]

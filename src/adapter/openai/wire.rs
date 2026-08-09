@@ -686,8 +686,14 @@ mod tests {
             "gpt-4o",
             vec![Message::user(MessageContent::parts(vec![
                 ContentPart::text("what is this"),
-                ContentPart::image_url("https://example.com/a.png", ImageDetail::High),
-                ContentPart::input_audio("AQID", AudioFormat::Wav),
+                ContentPart::ImageUrl {
+                    url: "https://example.com/a.png".into(),
+                    detail: ImageDetail::High,
+                },
+                ContentPart::InputAudio {
+                    data: "AQID".into(),
+                    format: AudioFormat::Wav,
+                },
             ]))],
         );
         let wire = WireChatCompletionRequest::from_request(&request).unwrap();
@@ -703,11 +709,15 @@ mod tests {
     fn tool_call_message_serialization() {
         let request = CompletionRequest::new(
             "gpt-4o",
-            vec![Message::assistant_with_tool_calls(vec![crate::adapter::types::ToolCall {
-                id: "call_1".into(),
-                name: "get_weather".into(),
-                arguments: serde_json::json!({"city": "beijing"}),
-            }])],
+            vec![Message::assistant_with_tool_calls_and_reasoning(
+                String::new(),
+                vec![crate::adapter::types::ToolCall {
+                    id: "call_1".into(),
+                    name: "get_weather".into(),
+                    arguments: serde_json::json!({"city": "beijing"}),
+                }],
+                None,
+            )],
         );
         let wire = WireChatCompletionRequest::from_request(&request).unwrap();
         let json = serde_json::to_value(&wire).unwrap();

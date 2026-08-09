@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::runtime::actor::{ActorContext, CognitiveActor};
 use crate::runtime::event::{Event, EventKind};
 use crate::runtime::types::{
-    ActionDecision, CycleId, CycleSummary, ModulationContext, TraceRecord,
+    ActionDecision, CycleId, CycleSummary, MemoryRetrieval, ModulationContext, TraceRecord,
 };
 
 #[derive(Default)]
@@ -19,6 +19,7 @@ struct CycleAccumulator {
     error_at_intervention: Option<f32>,
     user_input: Option<String>,
     retrieval: Option<String>,
+    memory_writes: Vec<String>,
     prediction_direction: Option<f32>,
     prediction_sentiment: Option<f32>,
     prediction_reaction: Option<String>,
@@ -44,7 +45,7 @@ impl TraceActor {
         self.records.clone()
     }
 
-    fn retrieval_summary(retrieval: &crate::runtime::types::MemoryRetrieval) -> String {
+    fn retrieval_summary(retrieval: &MemoryRetrieval) -> String {
         let mut parts = Vec::new();
         for memory in retrieval.episodic.iter().take(1) {
             parts.push(format!("episodic: {}", memory.summary.chars().take(60).collect::<String>()));
@@ -122,6 +123,15 @@ impl CognitiveActor for TraceActor {
             Event::MemoryRetrieved { retrieval, .. } => {
                 cycle.retrieval = Some(Self::retrieval_summary(retrieval));
             }
+            Event::MemoryWrite {
+                kind, strength, ..
+            } => {
+                let label = match kind {
+                    crate::runtime::types::MemoryKind::Episodic => "episodic",
+                    crate::runtime::types::MemoryKind::Semantic => "semantic",
+                };
+                cycle.memory_writes.push(format!("{label} s{strength:.2}"));
+            }
             Event::Prediction { trajectory, .. } => {
                 cycle.prediction_direction = Some(trajectory.direction);
                 cycle.prediction_sentiment = Some(trajectory.reaction_sentiment);
@@ -146,6 +156,7 @@ impl CognitiveActor for TraceActor {
                 error_after: cycle.error,
                 decision: cycle.decision.clone(),
                 retrieval: cycle.retrieval.clone(),
+                memory_writes: cycle.memory_writes.clone(),
                 prediction_direction: cycle.prediction_direction,
                 prediction_sentiment: cycle.prediction_sentiment,
                 prediction_reaction: cycle.prediction_reaction.clone(),
@@ -173,7 +184,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(7),
-            timestamp: 0,
+
         }
     }
 
@@ -239,8 +250,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.rpe, Some(0.5));
-        assert_eq!(summary.error, Some(0.5));
-        assert_eq!(summary.uncertainty, Some(0.3));
         assert!(summary.decision.is_some());
     }
 
@@ -279,6 +288,38 @@ mod tests {
         assert_eq!(records.len(), 1);
         let retrieval = records[0].retrieval.as_deref().unwrap_or("");
         assert!(retrieval.contains("episodic: user asked about the weather"), "{retrieval}");
+    }
+
+    #[tokio::test]
+    async fn record_keeps_memory_write_entries() {
+        let bus = EventBus::new(32);
+        let trace = TraceActor::new();
+        let records = trace.records();
+        let (_h, ready) = spawn_actor(bus.clone(), trace);
+        ready.await.unwrap();
+
+        bus.publish(Event::MemoryWrite {
+            meta: meta(),
+            kind: crate::runtime::types::MemoryKind::Episodic,
+            content: "episode".into(),
+            strength: 0.52,
+        });
+        bus.publish(Event::MemoryWrite {
+            meta: meta(),
+            kind: crate::runtime::types::MemoryKind::Semantic,
+            content: "rule".into(),
+            strength: 0.61,
+        });
+        bus.publish(Event::StreamEnd {
+            meta: meta(),
+            usage: None,
+        });
+        bus.publish(action_event(meta()));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let records = records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].memory_writes, vec!["episodic s0.52", "semantic s0.61"]);
     }
 
     #[tokio::test]

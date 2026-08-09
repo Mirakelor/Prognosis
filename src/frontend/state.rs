@@ -78,6 +78,9 @@ pub struct CognitiveSnapshot {
     pub last_error: Option<f32>,
     pub prediction_direction: Option<f32>,
     pub mode: String,
+    pub drive_homeostatic: f32,
+    pub drive_curiosity: f32,
+    pub drive_salience: f32,
 }
 
 pub struct InputState {
@@ -124,7 +127,6 @@ pub struct UiState {
     pub total_tokens: usize,
     pub selector: Option<Selector>,
     pub setup: Option<SetupState>,
-    pub show_intro: bool,
     pub scroll_offset: usize,
     pub last_tool_index: Option<usize>,
     pub tip: &'static str,
@@ -136,6 +138,7 @@ pub struct UiState {
     pub turn_removed: usize,
     pub turn_tool_calls: usize,
     pub pending_tool_calls: std::collections::VecDeque<(String, serde_json::Value, Option<String>)>,
+    pub last_recorded_assistant_index: Option<usize>,
     pub hitokoto: Option<crate::frontend::hitokoto::Hitokoto>,
     pub fold_expanded: bool,
     pub panel_scroll: usize,
@@ -159,7 +162,6 @@ impl UiState {
             total_tokens: 0,
             selector: None,
             setup: None,
-            show_intro: true,
             scroll_offset: 0,
             last_tool_index: None,
             tip: crate::frontend::logo::pick_tip(),
@@ -171,6 +173,7 @@ impl UiState {
             turn_removed: 0,
             turn_tool_calls: 0,
             pending_tool_calls: std::collections::VecDeque::new(),
+            last_recorded_assistant_index: None,
             hitokoto: None,
             fold_expanded: false,
             panel_scroll: 0,
@@ -251,7 +254,6 @@ impl UiState {
             content: content.to_string(),
             time,
         });
-        self.show_intro = false;
     }
 
     pub fn push_system(&mut self, content: &str) {
@@ -261,7 +263,6 @@ impl UiState {
     }
 
     pub fn append_stream(&mut self, content: &str, reasoning: &str) {
-        self.show_intro = false;
         let index = match self.streaming {
             Some(index) => index,
             None => {
@@ -291,7 +292,6 @@ impl UiState {
         name: String,
         arguments: String,
     ) -> usize {
-        self.show_intro = false;
         self.note_tool_started(&arguments);
         self.messages.push(UiMessage::ToolCall(ToolCallMsg {
             tool_call_id,
@@ -491,6 +491,12 @@ pub fn apply_modulator(
 pub fn apply_emotion(state: &mut UiState, emotion: &EmotionState) {
     state.cognitive.valence = emotion.valence;
     state.cognitive.arousal = emotion.arousal;
+}
+
+pub fn apply_drive(state: &mut UiState, drive: &crate::runtime::types::DriveState) {
+    state.cognitive.drive_homeostatic = drive.homeostatic;
+    state.cognitive.drive_curiosity = drive.curiosity;
+    state.cognitive.drive_salience = drive.salience;
 }
 
 pub fn apply_meta(state: &mut UiState, meta: &MetaState) {

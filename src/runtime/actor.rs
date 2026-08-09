@@ -102,7 +102,7 @@ pub fn spawn_actor<A: CognitiveActor + 'static>(
             bus.clone(),
             EventMeta {
                 cycle_id: crate::runtime::types::CycleId(0),
-                timestamp: 0,
+
             },
         );
         while let Some(event) = events.next().await {
@@ -133,7 +133,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 

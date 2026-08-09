@@ -9,6 +9,8 @@ pub const TIPS: &[&str] = &[
     "Use /models to switch models without restarting",
     "The agent predicts your next message; prediction errors drive its learning signals",
     "Scheduled tasks keep running and report into the conversation",
+    "Use /history to reload a past session, /continue for the most recent one",
+    "Use /remember to inject a summarized memory from an archived session",
 ];
 
 pub fn pick_tip() -> &'static str {

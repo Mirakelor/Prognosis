@@ -75,19 +75,22 @@ pub fn parse(text: &str) -> Vec<Line> {
             i += 1;
             continue;
         }
-        if let Some(heading) = trimmed.strip_prefix('#') {
-            lines.push(Line {
-                spans: vec![Span {
-                    text: heading.trim().to_string(),
-                    kind: SpanKind::Bold,
-                }],
-                code_block: false,
-                heading: true,
-                list_item: false,
-                table: None,
-            });
-            i += 1;
-            continue;
+        if trimmed.starts_with('#') {
+            let heading = trimmed.trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                lines.push(Line {
+                    spans: vec![Span {
+                        text: heading.to_string(),
+                        kind: SpanKind::Bold,
+                    }],
+                    code_block: false,
+                    heading: true,
+                    list_item: false,
+                    table: None,
+                });
+                i += 1;
+                continue;
+            }
         }
         if is_table_row(trimmed) && i + 1 < raw_lines.len() && is_separator_row(raw_lines[i + 1].trim()) {
             let mut rows = Vec::new();

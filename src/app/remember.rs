@@ -43,7 +43,7 @@ pub struct Remember {
     port: Arc<dyn LlmPort>,
     dir: PathBuf,
     index: Index,
-    current_session: Option<String>,
+    current_session: Option<SessionMeta>,
 }
 
 impl Remember {
@@ -84,17 +84,11 @@ impl Remember {
     }
 
     pub fn current_session(&self) -> Option<&str> {
-        self.current_session.as_deref()
+        self.current_session.as_ref().map(|meta| meta.id.as_str())
     }
 
     pub async fn start_session(&mut self) -> String {
         let id = self.next_id();
-        let meta = SessionMeta {
-            id: id.clone(),
-            created: now_string(),
-            summary: String::new(),
-            turns: 0,
-        };
         if self.index.sessions.len() >= MAX_FULL_SESSIONS {
             let oldest = self.index.sessions.remove(0);
             let turns = self.load_session(&oldest.id);
@@ -102,16 +96,21 @@ impl Remember {
             self.index.archive.push(summary);
             let _ = std::fs::remove_file(self.dir.join(format!("sessions/{}.json", oldest.id)));
         }
-        self.index.sessions.push(meta);
-        self.current_session = Some(id.clone());
+        self.current_session = Some(SessionMeta {
+            id: id.clone(),
+            created: now_string(),
+            summary: String::new(),
+            turns: 0,
+        });
         self.save_index();
         id
     }
 
     pub fn append_turn(&mut self, role: &str, content: &str) {
-        let Some(id) = self.current_session.clone() else {
+        let Some(meta) = self.current_session.clone() else {
             return;
         };
+        let id = meta.id.clone();
         let mut turns = self.load_session(&id);
         turns.push(ConversationTurn {
             role: role.to_string(),
@@ -126,6 +125,9 @@ impl Remember {
             serde_json::to_string_pretty(&turns).unwrap_or_default(),
         ) {
             eprintln!("[remember] cannot save session: {err}");
+        }
+        if !self.index.sessions.iter().any(|meta| meta.id == id) {
+            self.index.sessions.push(meta);
         }
         if let Some(meta) = self.index.sessions.iter_mut().find(|meta| meta.id == id) {
             meta.turns = turns.len();
@@ -152,8 +154,14 @@ impl Remember {
     }
 
     pub fn set_current(&mut self, id: &str) -> bool {
-        if self.index.sessions.iter().any(|meta| meta.id == id) {
-            self.current_session = Some(id.to_string());
+        if let Some(meta) = self
+            .index
+            .sessions
+            .iter()
+            .find(|meta| meta.id == id)
+            .cloned()
+        {
+            self.current_session = Some(meta);
             true
         } else {
             false
@@ -300,6 +308,7 @@ mod tests {
         tempfile::TempDir::new().unwrap()
     }
 
+
     #[tokio::test]
     async fn session_rollover_archives_oldest() {
         let dir = temp_dir();
@@ -313,8 +322,14 @@ mod tests {
         assert!(remember.archive().is_empty());
 
         remember.start_session().await;
-        assert_eq!(remember.list_sessions().len(), MAX_FULL_SESSIONS);
+        assert_eq!(
+            remember.list_sessions().len(),
+            MAX_FULL_SESSIONS - 1,
+            "an empty session is not registered until its first turn"
+        );
         assert_eq!(remember.archive().len(), 1);
+        remember.append_turn("user", "after rollover");
+        assert_eq!(remember.list_sessions().len(), MAX_FULL_SESSIONS);
         assert_eq!(remember.archive()[0].summary, "user asked about weather");
         assert_eq!(remember.archive()[0].highlights, vec!["weather", "forecast"]);
     }

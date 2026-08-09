@@ -46,7 +46,9 @@ impl ErrorComparatorActor {
 \n- error = 1 when the actual message matches NONE of the predicted candidates.\
 \n- Judge only semantic alignment of intent and topic; partial overlap with a candidate is a mid-range error (e.g. same topic, different intent ≈ 0.5-0.7; same intent, different topic ≈ 0.3-0.5).\
 \n- Score against the BEST matching candidate, not the average: one close candidate means the prediction captured the turn even if other candidates missed.\
-\n- Do not invent requirements; compare exactly the two inputs given.";
+\n- Do not invent requirements; compare exactly the two inputs given.\
+\n- Very short or purely social messages (\"ok\", \"thanks\", \"继续\") are near-zero error when the predicted reaction covers that kind of reply; they are not evidence of a wrong prediction.\
+\n- If the prediction was for the assistant's tool round and the user instead asks an unrelated question, that is a high error — the prediction missed the turn entirely.";
         let candidates = if prediction.intent_candidates.is_empty() {
             vec![prediction.intent]
         } else {
@@ -219,7 +221,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 

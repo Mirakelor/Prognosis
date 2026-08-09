@@ -272,6 +272,7 @@ pub struct TraceRecord {
     pub error_after: Option<f32>,
     pub decision: Option<ActionDecision>,
     pub retrieval: Option<String>,
+    pub memory_writes: Vec<String>,
     pub prediction_direction: Option<f32>,
     pub prediction_sentiment: Option<f32>,
     pub prediction_reaction: Option<String>,

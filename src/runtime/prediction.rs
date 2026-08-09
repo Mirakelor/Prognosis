@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -7,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::adapter::types::{Message, ReasoningEffort, Temperature, ToolCall, ToolDefinition};
 use crate::runtime::actor::{ActorContext, CognitiveActor};
-use crate::runtime::event::{Event, EventKind, StateRequest, StateResponse};
+use crate::runtime::bus::EventBus;
+use crate::runtime::event::{Event, EventKind, EventMeta, StateRequest, StateResponse};
 use crate::runtime::ports::LlmPort;
 use crate::runtime::types::{
     GenerateRequest, ModulationContext, PredictionTrajectory, RuleContext, SkillContext,
@@ -88,23 +90,68 @@ impl PredictionActor {
         self
     }
 
+    pub fn with_rules(mut self, rules: Vec<RuleContext>) -> Self {
+        self.rules = rules;
+        self
+    }
+
+    fn spawn_prediction(&self, meta: EventMeta, input: String, bus: EventBus) {
+        let port = self.port.clone();
+        let rules = self.rules.clone();
+        let inhibited = self.inhibited.iter().cloned().collect::<Vec<_>>();
+        tokio::spawn(async move {
+            let predictor = PredictionActor::new(port).with_rules(rules);
+            if let Ok(Some(mut trajectory)) = predictor.predict(&input, &bus, meta).await {
+                trajectory
+                    .topics
+                    .retain(|topic| !inhibited.contains(topic));
+                trajectory
+                    .key_elements
+                    .retain(|element| !inhibited.contains(element));
+                bus.publish(Event::Prediction { meta, trajectory });
+            }
+        });
+    }
+
     async fn predict(
         &self,
         input: &str,
-        ctx: &mut crate::runtime::actor::ActorContext,
+        bus: &EventBus,
+        meta: EventMeta,
     ) -> Result<Option<PredictionTrajectory>, String> {
-        let prior = match ctx
-            .request_state(StateRequest::MemoryRetrieval {
+        let correlation_id = meta.cycle_id.0;
+        bus.publish(Event::RequestState {
+            meta,
+            request: StateRequest::MemoryRetrieval {
                 query: input.to_string(),
+            },
+            correlation_id,
+        });
+        let prior = {
+            let mut responses = Box::pin(bus.subscribe_kinds(&[EventKind::State]));
+            tokio::time::timeout(Duration::from_millis(500), async {
+                loop {
+                    match responses.next().await? {
+                        Event::StateResponse {
+                            correlation_id: id,
+                            response: StateResponse::MemoryRetrieval(retrieval),
+                            ..
+                        } if id == correlation_id => return Some(retrieval),
+                        _ => continue,
+                    }
+                }
             })
             .await
-        {
-            Some(StateResponse::MemoryRetrieval(retrieval)) => retrieval
-                .semantic
-                .iter()
-                .map(|entry| entry.content.clone())
-                .collect::<Vec<_>>(),
-            _ => vec![],
+            .ok()
+            .flatten()
+            .map(|retrieval| {
+                retrieval
+                    .semantic
+                    .iter()
+                    .map(|entry| entry.content.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
         };
         let mut prior = prior;
         let rule_text = self
@@ -128,7 +175,9 @@ impl PredictionActor {
 \n- reaction: the most likely next user message, one sentence, written as the user would say it.\
 \n- reaction_sentiment: the user's expected sentiment — > 0 satisfied or positive, < 0 dissatisfied or negative.\
 \n- Predict what the user is likely to say, not what the assistant should say: you are predicting the user's side of the conversation, not drafting the answer.\
-\n- Do not invent knowledge; predict from the context given. When the context is ambiguous, prefer a broader candidate set over a single guess.";
+\n- Do not invent knowledge; predict from the context given. When the context is ambiguous, prefer a broader candidate set over a single guess.\
+\n- When the last turn was a tool round (the assistant was executing tools), the user's next message usually reacts to what the tools revealed — predict that reaction.\
+\n- When the conversation is a greeting or pure chit-chat, predict the natural reply to the greeting rather than forcing a work-related topic.";
         let prompt = if prior.is_empty() {
             base_prompt.to_string()
         } else {
@@ -200,21 +249,33 @@ impl PredictionActor {
             .map(|slot| slot.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
-        let mut system = "You are a cognitive coding agent operating inside the user's project directory. A prediction-coding control system monitors your own uncertainty and shapes how you answer: when the situation is surprising or uncertain, slow down — gather evidence and verify before claiming anything; when you are confident, you may answer more fluently.\
-\n\n# Core rules\
-\n- Ground every claim in evidence. Never fabricate file contents, search results, computed values, or external facts. If you do not know something, say so explicitly.\
+        let mut system = "You are a cognitive coding agent running inside the user's project directory. You act like a careful senior engineer: you read before you write, you verify before you claim, and you keep the user's goal in front of you at all times. A prediction-coding control system monitors your own uncertainty and shapes how you answer: when the situation is surprising or uncertain, slow down — gather evidence and verify before claiming anything; when you are confident, you may answer more fluently.\
+\n\n# Ground rules\
+\n- Ground every claim in evidence. Never fabricate file contents, search results, computed values, command outputs, or external facts. If you do not know something, say so explicitly.\
 \n- Gather before you answer: if the answer depends on information you were not given, use the available tools to obtain it instead of guessing.\
-\n- Read the relevant file (or the relevant part of it) before editing it, and re-read it after a previous edit changed the file, so your edits always apply to current content.\
+\n- The user's request is the highest authority: when rules or evidence seem to conflict with it, resolve the conflict by verifying or by asking, never by silently picking a side.\
+\n- Reply in the same language as the user's request, concisely. Match the user's level of detail: a one-line question gets a one-line answer unless more detail is genuinely needed.\
+\n- Do not fabricate a response when you are blocked: if a tool is unavailable, a file is missing, or an action is not possible, say what is blocked and what you need to proceed.\
+\n\n# Tool usage\
 \n- Prefer the dedicated tool for each job: read_file for file contents, grep_search for content search, file_glob_search for finding files by name, ls for directory listings, create_new_file for new files, edit_existing_file / single_find_and_replace for modifications, view_diff for uncommitted changes, run_terminal_command only when no dedicated tool exists (builds, tests, git operations, servers). Never use shell commands (sed, awk, etc.) to edit files.\
+\n- Before calling a tool, know its required arguments: check the tool description and provide every required field. A call missing a required argument is rejected before it runs, and a rejected call costs a round trip.\
+\n- Call each tool at most once per task unless new information genuinely requires a repeat. If a call failed, read the error and fix the arguments — a failed call usually means wrong arguments, not a broken tool.\
 \n- When a command is run in the background, always suggest stopping it with shell commands, never Ctrl+C.\
-\n- If the current task involves code standards or preferences, request the relevant rule with the request_rule tool before answering.\
-\n- If you are unsure what the user wants, ask one brief clarifying question rather than guessing.\
-\n- Reply in the same language as the user's request, concisely.\
-\n- When continuing after tool results, start with a NEW brief sentence about what you learned or what you will do next. Never repeat text you already wrote in this conversation.\
-\n\n# When things go wrong\
+\n\n# Reading and editing files\
+\n- Read the relevant file (or the relevant part of it) before editing it, and re-read it after a previous edit changed the file, so your edits always apply to current content.\
+\n- When editing, change only what the task requires. Preserve everything else byte-for-byte, including whitespace, comments, and unrelated code.\
+\n- After an edit, verify the result when practical: re-read the edited region or run the relevant check (build, test, diff).\
+\n\n# Failure recovery\
 \n- A failed tool call usually means wrong arguments, not a broken tool: read the error message, fix the call, and retry.\
 \n- If a tool result contradicts an earlier assumption, update your understanding instead of insisting on it.\
-\n- If the user's request is impossible or unsafe, say so instead of attempting it."
+\n- If your call was rejected (denied, blocked, corrected), read the rejection reason and adjust: a denied call usually means the approach was wrong, a corrected call means the arguments were repaired for you — review the corrected result.\
+\n- If the user's request is impossible or unsafe, say so instead of attempting it.\
+\n- Do not loop: if the same call fails twice for the same reason, stop and change approach or ask the user, rather than retrying a third time.\
+\n\n# Working style\
+\n- When continuing after tool results, start with a NEW brief sentence about what you learned or what you will do next. Never repeat text you already wrote in this conversation.\
+\n- If you are unsure what the user wants, ask one brief clarifying question rather than guessing.\
+\n- If the current task involves code standards or preferences, request the relevant rule with the request_rule tool before answering.\
+\n- When a task is complete, say so and summarize what changed in one or two lines — do not keep working."
             .to_string();
         let active_rules = self.active_rules(&tool_result_text);
         if !active_rules.is_empty() {
@@ -239,25 +300,25 @@ impl PredictionActor {
         let mut messages = vec![Message::system(system)];
         if !self.session_summary.is_empty() {
             messages.push(Message::system(format!(
-                "(Session summary — recalled context from a previous session; use it to continue the earlier work)\n{}",
+                "(Session summary — recalled context from a previous session; this is your memory of earlier work, not the current user input. Use it to continue the earlier work: pick up unfinished threads, respect decisions already made, and avoid re-litigating settled points. Treat facts here as background that may be stale: if they conflict with the current project state, verify with tools and trust what you observe now. Do not repeat the summary back to the user; work from it silently.\n{}",
                 self.session_summary
             )));
         }
         if let Some(meta) = &self.meta_state {
             if meta.uncertainty >= 0.7 || meta.confidence <= 0.3 {
                 messages.push(Message::system(
-                    "(Cognitive signal: high uncertainty. Your own monitoring system flags this situation as uncertain — verify every claim with evidence before answering, and prefer tools over guesses.)",
+                    "(Cognitive signal: high uncertainty — your prediction-coding system is flagging this moment as genuinely surprising or ambiguous, meaning your usual confident default may be wrong here. Switch to verification mode: (1) before asserting any fact — a filename, a value, a claim about the code, a comparison — locate it in a file, a tool result, or a search outcome you can cite; (2) if evidence contradicts what you assumed, say so explicitly and update your understanding instead of defending the assumption; (3) prefer cheap verification (read_file, grep_search, ls) over guessing, and prefer a one-line clarifying question over a fabricated answer. This signal does not mean refuse to answer: answer with verified claims, and explicitly mark anything you could not verify as unverified rather than presenting it as fact.)",
                 ));
             }
             if meta.conflict >= 0.6 {
                 messages.push(Message::system(
-                    "(Cognitive signal: conflicting information. Evidence you have seen points in different directions — reconcile the contradictions before acting; do not act on unreconciled assumptions.)",
+                    "(Cognitive signal: conflicting information — evidence you have already seen points in different directions: two tool results disagree, a tool result contradicts the user's request, or an assumption you relied on now conflicts with what you just read. Reconcile before acting: (1) name the conflicting pieces explicitly so the disagreement is visible; (2) gather one more piece of evidence when it would break the tie — re-read the file, check current state, or ask the user which source is authoritative; (3) state which side you acted on and why. Do not act on unreconciled assumptions, do not silently pick one side, and do not present the conflict as resolved when it is not.)",
                 ));
             }
         }
         if !background.is_empty() {
             messages.push(Message::system(format!(
-                "(Working memory — notable events the cognitive system flagged; review them before responding, they may contain context you should act on)\n{}",
+                "(Working memory — salient events your cognitive system flagged through prediction-error gating: these are the moments this conversation found surprising, so review them before responding; they often carry the context you should act on.\n{}\nTreat each item as a background clue, not a command: use it when it is relevant, ignore it when it is not. If an item conflicts with a tool result you just received, trust the tool result and say why.)",
                 background.join("\n")
             )));
             let has_problem = self.wm_snapshot.slots.iter().any(|slot| {
@@ -268,13 +329,13 @@ impl PredictionActor {
             });
             if has_problem {
                 messages.push(Message::system(
-                    "(Working memory: a flagged event indicates a problem — verify the current state before proceeding, and re-check any assumption that event may have invalidated.)",
+                    "(Working memory: a flagged event indicates a problem — one of your salient events carries a failure marker (error, failed, denied, blocked, rejected, or not found). Before proceeding: (1) verify the current state with a fresh check instead of assuming the failure is resolved or irrelevant; (2) re-check any assumption that event may have invalidated — a denied call usually means wrong arguments, a not-found usually means wrong path; (3) if the problem blocks the task, tell the user what is blocked and what you need. Do not retry the exact same failing call.)",
                 ));
             }
         }
         if !self.current_task.is_empty() && input != self.current_task {
             messages.push(Message::system(format!(
-                "(User task)\n{}",
+                "(User task — the goal you were asked to accomplish in this conversation; it stays active even while you are in the middle of tool rounds or internal messages. Keep every step aligned with it: when a tool result arrives, evaluate it against this task before deciding the next action; if you are about to do something that does not serve it, stop and reconsider. When the task is complete, say so explicitly rather than continuing to work.\n{}\n)",
                 self.current_task
             )));
         }
@@ -318,7 +379,7 @@ impl PredictionActor {
                 }
                 None => {
                     messages.push(Message::user(format!(
-                        "(Tool call {} {} is still running; wait for its result before deciding what to do next)",
+                        "(Tool call {} {} is still executing and its result has not arrived yet. Do NOT call it again and do NOT proceed as if it succeeded or failed — a duplicate call would be rejected, and acting on a missing result would be guessing. Wait for the result: it will arrive as a tool message right after this one. If you need to plan in the meantime, plan only conditionally — \"when the result arrives, then …\".)",
                         round.name, round.arguments
                     )));
                 }
@@ -335,14 +396,14 @@ impl PredictionActor {
                 .collect::<Vec<_>>()
                 .join("\n");
             let mut note = format!(
-                "(Tools already executed in this task — do not call any of them again; each tool should be called at most once per task unless new information genuinely requires a repeat)\n{listed}"
+                "(Tools already executed in this task — each tool should be called at most once per task unless new information genuinely requires a repeat; calling an executed tool again is rejected by the runtime and wastes the user's time.\n{listed}\nUse these results as your evidence base: if the answer can be composed from what is already here, do not call more tools.)"
             );
             if let Some(last) = self.tool_rounds.last()
                 && !last.content.trim().is_empty()
             {
                 let snippet: String = last.content.trim().chars().take(80).collect();
                 note.push_str(&format!(
-                    "\nYour previous round started with: \"{snippet}\" — write something new, do not repeat it."
+                    "\n\n(Your previous round started with: \"{snippet}\" — write something new, do not repeat it. Models tend to reuse their opening sentence when resuming after tool results; the conversation already contains that text, and repeating it confuses the history. Open instead with one fresh sentence about what the latest result means for the task, then continue.)"
                 ));
             }
             messages.push(Message::user(note));
@@ -406,6 +467,7 @@ impl CognitiveActor for PredictionActor {
             EventKind::Action,
             EventKind::Generation,
             EventKind::Modulation,
+            EventKind::Prediction,
         ]
     }
 
@@ -512,44 +574,18 @@ impl CognitiveActor for PredictionActor {
                     self.executed_tools.clear();
                     self.batch_generated = false;
                 }
-                match self.predict(&input, ctx).await {
-                    Ok(Some(mut trajectory)) => {
-                        self.last_trajectory = trajectory.clone();
-                        trajectory
-                            .topics
-                            .retain(|topic| !self.inhibited.contains(topic));
-                        trajectory
-                            .key_elements
-                            .retain(|element| !self.inhibited.contains(element));
-                        vec![
-                            Event::Prediction {
-                                meta: *meta,
-                                trajectory,
-                            },
-                            Event::Generate {
-                                meta: *meta,
-                                request: generate,
-                            },
-                        ]
-                    }
-                    Ok(None) => vec![Event::Generate {
-                        meta: *meta,
-                        request: generate,
-                    }],
-                    Err(error) => vec![
-                        Event::GenerationError {
-                            meta: *meta,
-                            error,
-                        },
-                        Event::Generate {
-                            meta: *meta,
-                            request: generate,
-                        },
-                    ],
-                }
+                self.spawn_prediction(*meta, input, ctx.bus());
+                vec![Event::Generate {
+                    meta: *meta,
+                    request: generate,
+                }]
             }
             Event::Inhibition { signal, .. } => {
                 self.inhibited.extend(signal.targets.iter().cloned());
+                vec![]
+            }
+            Event::Prediction { trajectory, .. } => {
+                self.last_trajectory = trajectory.clone();
                 vec![]
             }
             Event::CompactContext { summary, .. } => {
@@ -601,7 +637,7 @@ mod tests {
     fn meta() -> EventMeta {
         EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         }
     }
 
@@ -736,22 +772,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn llm_failure_publishes_generation_error() {
+    async fn llm_failure_is_silent_and_generation_still_runs() {
         let bus = EventBus::new(16);
         let (_h, ready) = spawn_actor(bus.clone(), PredictionActor::new(Arc::new(FailingPort)));
         ready.await.unwrap();
-        let mut errors = Box::pin(bus.subscribe_kinds(&[EventKind::Generation]));
+        let mut generations = Box::pin(bus.subscribe_kinds(&[EventKind::Generation]));
         let mut predictions = Box::pin(bus.subscribe_kinds(&[EventKind::Prediction]));
 
         bus.publish(attention_event("please help me with the weather report"));
-        let error = tokio::time::timeout(Duration::from_secs(2), errors.next())
+        let event = tokio::time::timeout(Duration::from_secs(2), generations.next())
             .await
             .unwrap()
             .unwrap();
-        match error {
-            Event::GenerationError { .. } => {}
-            _ => panic!("expected generation error event"),
-        }
+        assert!(
+            matches!(event, Event::Generate { .. }),
+            "main generation must start even when prediction fails"
+        );
         let stray = tokio::time::timeout(Duration::from_millis(300), predictions.next()).await;
         assert!(stray.is_err(), "no prediction expected when the port fails");
     }
@@ -807,7 +843,15 @@ mod tests {
             .unwrap();
 
         let recorded = requests.lock().unwrap();
-        let request = recorded.first().unwrap();
+        let request = recorded
+            .iter()
+            .find(|req| {
+                req.messages[0]
+                    .content
+                    .to_plain_text()
+                    .contains("predictor for a cognitive agent")
+            })
+            .expect("prediction request must be recorded");
         let prompt = request.messages[0].content.to_plain_text();
         assert!(
             prompt.contains("Known knowledge"),
@@ -836,7 +880,7 @@ mod tests {
 
         let meta1 = EventMeta {
             cycle_id: CycleId(1),
-            timestamp: 0,
+
         };
         bus.publish(Event::Attention {
             meta: meta1,
@@ -875,7 +919,7 @@ mod tests {
 
         let meta2 = EventMeta {
             cycle_id: CycleId(2),
-            timestamp: 0,
+
         };
         bus.publish(Event::Attention {
             meta: meta2,
@@ -1158,7 +1202,7 @@ mod tests {
             request.messages[1]
                 .content
                 .to_plain_text()
-                .contains("still running"),
+                .contains("is still executing and its result has not arrived yet"),
             "pending tool must be described as still running"
         );
     }
@@ -1171,7 +1215,13 @@ mod tests {
         let injected = request
             .messages
             .iter()
-            .any(|message| message.content.to_plain_text().contains("(User task)\ntest all tools"));
+            .any(|message| {
+                message
+                    .content
+                    .to_plain_text()
+                    .contains("(User task — the goal you were asked to accomplish")
+                    && message.content.to_plain_text().contains("test all tools")
+            });
         assert!(injected, "user task must be injected for non-user input");
     }
 
@@ -1201,7 +1251,7 @@ mod tests {
         let chunk_event = |cycle: u64, text: &str| Event::Chunk {
             meta: crate::runtime::event::EventMeta {
                 cycle_id: CycleId(cycle),
-                timestamp: 0,
+
             },
             chunk: CompletionChunk {
                 model: "fake".into(),
@@ -1262,7 +1312,7 @@ mod tests {
         let pending_count = generate
             .messages
             .iter()
-            .filter(|m| m.content.to_plain_text().contains("still running"))
+            .filter(|m| m.content.to_plain_text().contains("is still executing and its result has not arrived yet"))
             .count();
         assert_eq!(pending_count, 1, "only the unfinished round may show still running");
         assert!(
@@ -1424,7 +1474,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            text.contains("Working memory — notable events the cognitive system flagged"),
+            text.contains("Working memory — salient events your cognitive system flagged"),
             "slots must be injected with the labeled header: {text}"
         );
         assert!(text.contains("fn main() {}"), "slot content must be kept: {text}");

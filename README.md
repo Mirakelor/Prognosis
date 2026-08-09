@@ -91,6 +91,7 @@ prognosis
 |---|---|
 | `Enter` | Send message / approve / select |
 | `Shift+Enter` / `Alt+Enter` | Insert a newline in the input box (Shift+Enter degrades to Alt+Enter on some terminals) |
+| `Shift+Tab` / `y` | Approve and remember (fallback keys when Shift+Enter is not delivered by the terminal) |
 | `Esc` | Cancel generation / deny approval / cancel running tools / close an overlay |
 | `Tab` | Toggle the selected rule or skill in the rules/skills panel |
 | `↑` `↓` | Navigate input history (or command list while typing `/`) |
