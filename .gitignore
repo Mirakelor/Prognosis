@@ -1,0 +1,14 @@
+# Build artifacts
+/target
+
+# Qoder CLI session data
+.qoder/
+
+# Runtime state (per-machine, never commit)
+.prognosis/history/
+.prognosis/approvals.json
+.prognosis/state.json
+
+# NOTE: .prognosis/rules/ is intentionally NOT ignored — team rules are shared via git.
+# .agents/skills/ is also tracked — project skills committed as real directories
+# (skills installed via `npx skills add --copy` or placed manually).
