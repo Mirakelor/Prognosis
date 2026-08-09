@@ -25,13 +25,13 @@
 No Rust, no compiler, no `sudo` required on machines where a prebuilt release exists:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Mirakelor/Prognosis/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Mirakelor/Prognosis/master/install.sh)
 ```
 
 Or download and run it locally:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/Mirakelor/Prognosis/main/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/Mirakelor/Prognosis/master/install.sh
 bash install.sh
 ```
 

@@ -3,9 +3,9 @@
 # Prognosis 一键安装脚本
 #
 # 用法:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/Mirakelor/Prognosis/main/install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/Mirakelor/Prognosis/master/install.sh)
 #   或
-#   curl -fsSL -o install.sh https://raw.githubusercontent.com/Mirakelor/Prognosis/main/install.sh && bash install.sh
+#   curl -fsSL -o install.sh https://raw.githubusercontent.com/Mirakelor/Prognosis/master/install.sh && bash install.sh
 #
 # 行为:
 #   1. 优先下载 GitHub Releases 预编译二进制（零依赖、无需 sudo、无需 Rust）
