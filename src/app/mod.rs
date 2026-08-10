@@ -83,7 +83,9 @@ IMPORTANT:
 
 WARNINGS:
 - When not using `replace_all`, the edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
-- The edit will likely fail if you have not recently used the `read_file` tool to view up-to-date file contents."#;
+- The edit will likely fail if you have not recently used the `read_file` tool to view up-to-date file contents.
+
+Limits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead."#;
 
 const CREATE_RULE_BLOCK_DESCRIPTION: &str = r#"Creates a "rule" that can be referenced in future conversations. This should be used whenever you want to establish code standards / preferences that should be applied consistently, or when you want to avoid making a mistake again. To modify existing rules, use the edit tool instead.
 
@@ -110,7 +112,7 @@ fn run_terminal_command_description() -> String {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into())
     );
     format!(
-        "Run a terminal command in the project directory and return its output.\n\nGuidelines:\n- Each invocation starts a fresh shell with NO memory of previous commands; chain dependent commands in a single call (e.g. 'cd dir && make test').\n- Prefer dedicated tools over shell commands: use the file tools for reading and editing files; use the shell only for builds, tests, git operations, and other actions that have no dedicated tool.\n- NEVER use shell commands (sed, awk, perl, etc.) to edit files.\n- When a command runs in the background (waitForCompletion=false), ALWAYS suggest stopping it with a shell command (e.g. 'kill <pid>' or 'pkill -f <name>'); NEVER suggest Ctrl+C.\n- When you suggest follow-up shell commands, always format them as shell code blocks.\n- Do NOT run commands that require special/admin privileges.\n- Prefer '&&' chaining over separate calls when the second command depends on the first.\n{platform_info}"
+        "Run a terminal command in the project directory and return its output.\n\nGuidelines:\n- Each invocation starts a fresh shell with NO memory of previous commands; chain dependent commands in a single call (e.g. 'cd dir && make test').\n- Prefer dedicated tools over shell commands: use the file tools for reading and editing files; use the shell only for builds, tests, git operations, and other actions that have no dedicated tool.\n- NEVER use shell commands (sed, awk, perl, etc.) to edit files.\n- When a command runs in the background (waitForCompletion=false), ALWAYS suggest stopping it with a shell command (e.g. 'kill <pid>' or 'pkill -f <name>'); NEVER suggest Ctrl+C.\n- When you suggest follow-up shell commands, always format them as shell code blocks.\n- Do NOT run commands that require special/admin privileges.\n- Prefer '&&' chaining over separate calls when the second command depends on the first.\n- The command runs with the project directory as its working directory but is NOT limited to it: it can access paths outside the project (e.g. ~/Desktop) when the dedicated file tools cannot reach them. Such usage is legitimate when the target is outside the project; the tool still asks for your approval before running.\n{platform_info}"
     )
 }
 
@@ -145,7 +147,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
     match name {
         "read_file" => (
             Some(
-                "Read the contents of an existing file in the workspace and return them with line numbers. Use this before editing a file, before quoting from a file, and whenever you need to know what the file actually contains — never guess file contents from memory or from an earlier version. Re-read a file after a previous edit changed it, so your edits always apply to current content; the file may have changed since you last saw it.\n\nBehavior:\n- Output includes line numbers, so you can refer to specific lines (\"around line 42\") in follow-up calls.\n- Large files are read in full; if the output is very long, prefer reading the relevant part or using grep_search first to locate the section you need.\n- The path can be relative to the project root, absolute, a tilde path (~/...), or a file:// URI.\n- If the file does not exist or cannot be read, the tool returns an explicit error message instead of guessing content.".into(),
+                "Read the contents of an existing file in the workspace and return them with line numbers. Use this before editing a file, before quoting from a file, and whenever you need to know what the file actually contains — never guess file contents from memory or from an earlier version. Re-read a file after a previous edit changed it, so your edits always apply to current content; the file may have changed since you last saw it.\n\nBehavior:\n- Output includes line numbers, so you can refer to specific lines (\"around line 42\") in follow-up calls.\n- Large files are read in full; if the output is very long, prefer reading the relevant part or using grep_search first to locate the section you need.\n- The path can be relative to the project root, absolute, a tilde path (~/...), or a file:// URI.\n- If the file does not exist or cannot be read, the tool returns an explicit error message instead of guessing content.\n\nLimits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -157,7 +159,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "create_new_file" => (
             Some(
-                "Create a brand-new file with the given contents. Use this tool ONLY when the file does not exist yet — never to overwrite an existing file; if the file already exists, use edit_existing_file or single_find_and_replace instead.\n\nBehavior:\n- The parent directory is created automatically when needed.\n- The contents are written exactly as provided; do not include markdown fences or explanatory text in the contents argument.\n- If a file already exists at the path, the call is rejected — check with ls or read_file first when you are unsure whether the file exists.".into(),
+                "Create a brand-new file with the given contents. Use this tool ONLY when the file does not exist yet — never to overwrite an existing file; if the file already exists, use edit_existing_file or single_find_and_replace instead.\n\nBehavior:\n- The parent directory is created automatically when needed.\n- The contents are written exactly as provided; do not include markdown fences or explanatory text in the contents argument.\n- If a file already exists at the path, the call is rejected — check with ls or read_file first when you are unsure whether the file exists.\n\nLimits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -181,7 +183,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "file_glob_search" => (
             Some(
-                "Search for files by name or path pattern recursively across the project, using glob syntax. Use this to locate a file when you know part of its name or path but not its exact location (e.g. find the test file for a module, locate a config file).\n\nBehavior:\n- '**' matches any number of directories (e.g. 'src/**/tests/*.rs').\n- Build, cache, and dependency directories (target, node_modules, .git, etc.) are excluded — use ls to inspect those.\n- Results may be truncated; prefer targeted patterns over broad ones like '*'. If a broad pattern returns nothing useful, narrow it with the directory you expect the file in.".into(),
+                "Search for files by name or path pattern recursively across the project, using glob syntax. Use this to locate a file when you know part of its name or path but not its exact location (e.g. find the test file for a module, locate a config file).\n\nBehavior:\n- '**' matches any number of directories (e.g. 'src/**/tests/*.rs').\n- Build, cache, and dependency directories (target, node_modules, .git, etc.) are excluded — use ls to inspect those.\n- Results may be truncated; prefer targeted patterns over broad ones like '*'. If a broad pattern returns nothing useful, narrow it with the directory you expect the file in.\n\nLimits: search covers the project directory only; files outside the project cannot be searched with this tool — use run_terminal_command for those.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -197,7 +199,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "ls" => (
             Some(
-                "List the contents of a directory with file names and sizes. Use this to discover the project layout, confirm what a directory contains, or find where a file lives before reading or editing it. Call it on the project root first when you start a task in an unfamiliar workspace — the listing tells you which files exist and what to read next.\n\nBehavior:\n- Paths can be relative to the project root, absolute, or tilde paths.\n- With recursive=true the whole subtree is listed — use it sparingly on large trees (node_modules, build output) because the output can be very long.\n- If the directory does not exist or cannot be read, returns an explicit error message.".into(),
+                "List the contents of a directory with file names and sizes. Use this to discover the project layout, confirm what a directory contains, or find where a file lives before reading or editing it. Call it on the project root first when you start a task in an unfamiliar workspace — the listing tells you which files exist and what to read next.\n\nBehavior:\n- Paths can be relative to the project root, absolute, or tilde paths.\n- With recursive=true the whole subtree is listed — use it sparingly on large trees (node_modules, build output) because the output can be very long.\n- If the directory does not exist or cannot be read, returns an explicit error message.\n\nLimits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -269,7 +271,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "edit_existing_file" => (
             Some(format!(
-                "Use this tool to edit an existing file. If you don't know the contents of the file, read it first.\n{EDIT_CODE_INSTRUCTIONS}\n{NO_PARALLEL_TOOL_CALLING_INSTRUCTION}"
+                "Use this tool to edit an existing file. If you don't know the contents of the file, read it first.\n{EDIT_CODE_INSTRUCTIONS}\n{NO_PARALLEL_TOOL_CALLING_INSTRUCTION}\n\nLimits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead."
             )),
             serde_json::json!({
                 "type": "object",
@@ -295,7 +297,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
         ),
         "grep_search" => (
             Some(
-                "Search file contents across the project with a regular expression (ripgrep). Use this to find where a symbol is defined, used, or referenced, or to locate code matching a pattern — it is the fastest way to answer questions like \"where is this function called?\" or \"which files use this constant?\".\n\nBehavior:\n- The query is a regex; use alternation (e.g. 'word1|word2|word3') or character classes to find multiple potential spellings in a single search.\n- Build, cache, and dependency directories are excluded.\n- Results may be truncated — narrow the pattern (e.g. 'fn handle_call_tool' or 'trait Lang.*Adapter') instead of using a broad term.\n- The pattern is passed directly to ripgrep, not to a shell, so no quoting or escaping for the shell is needed.".into(),
+                "Search file contents across the project with a regular expression (ripgrep). Use this to find where a symbol is defined, used, or referenced, or to locate code matching a pattern — it is the fastest way to answer questions like \"where is this function called?\" or \"which files use this constant?\".\n\nBehavior:\n- The query is a regex; use alternation (e.g. 'word1|word2|word3') or character classes to find multiple potential spellings in a single search.\n- Build, cache, and dependency directories are excluded.\n- Results may be truncated — narrow the pattern (e.g. 'fn handle_call_tool' or 'trait Lang.*Adapter') instead of using a broad term.\n- The pattern is passed directly to ripgrep, not to a shell, so no quoting or escaping for the shell is needed.\n\nLimits: search covers the project directory only; files outside the project cannot be searched with this tool — use run_terminal_command for those.".into(),
             ),
             serde_json::json!({
                 "type": "object",
@@ -1030,12 +1032,27 @@ impl App {
             return Err(format!("session #{id} not found"));
         }
         let dialogue = pair_dialogue(&turns);
+        let mut tool_lines: Vec<&str> = turns
+            .iter()
+            .filter(|turn| turn.role == "tool")
+            .map(|turn| turn.content.as_str())
+            .collect();
+        tool_lines.reverse();
+        tool_lines.truncate(10);
+        tool_lines.reverse();
+        let mut note = format!(
+            "(Session #{id} resumed — the full conversation history is loaded; continue the earlier work.)"
+        );
+        if !tool_lines.is_empty() {
+            note.push_str(&format!(
+                "\n(Previous tool activity — tools that already ran in this session; do not re-run them without a reason:\n{}\n)",
+                tool_lines.join("\n")
+            ));
+        }
         let meta = self.next_meta();
         self.runtime
             .publish(Event::RestoreDialogue { meta, turns: dialogue });
-        self.inject_context(&format!(
-            "(Session #{id} resumed — the full conversation history is loaded; continue the earlier work.)"
-        ));
+        self.inject_context(&note);
         self.remember.set_current(id);
         Ok(format!("resumed session #{id} ({} turns)", turns.len()))
     }
@@ -1624,6 +1641,12 @@ impl App {
             arguments: truncate(&arguments.to_string(), TRACE_ARG_LIMIT),
             output: truncate(&output, TRACE_OUTPUT_LIMIT),
         });
+        let summary_line = format!(
+            "{name}({}) -> {} [{verdict}]",
+            truncate(&arguments.to_string(), TRACE_ARG_LIMIT),
+            truncate(&output, 300)
+        );
+        self.remember.append_turn("tool", &summary_line);
         let meta2 = self.next_meta();
         self.runtime.publish(Event::ToolResult {
             meta: meta2,
@@ -1640,7 +1663,7 @@ impl App {
                 "(Tool call correction FAILED: the corrected call was malformed: {output}) Do not retry the same call; reconsider your tool plan and issue the call yourself with complete arguments."
             )
         } else if verdict == "corrected" {
-            format!("(Tool call corrected by supervisor: {name} — the corrected call was executed instead; review its result)\n{output}")
+            format!("(Tool call corrected by supervisor: the original {name} call was repaired and executed instead as {name}({arguments}) — review this result with the corrected call in mind; if the correction contradicts what you wanted, adapt your next step accordingly)\n{output}")
         } else {
             format!("(Tool {name} result)\n{output}")
         };
@@ -2105,11 +2128,32 @@ mod tests {
         app.remember.start_session().await;
         app.remember.append_turn("user", "hello");
         app.remember.append_turn("assistant", "hi there");
+        app.remember.append_turn("tool", "ls({\"dirPath\":\".\"}) -> src/ [allowed]");
         let id = app.remember.list_sessions()[0].id.clone();
+        let mut perceptions = Box::pin(app.runtime.bus().subscribe_kinds(&[EventKind::Perception]));
         let message = app.resume_session(&id).expect("resume should succeed");
         assert!(message.contains("resumed session"), "{message}");
         assert!(message.contains(&id), "{message}");
         assert_eq!(app.remember.current_session(), Some(id.as_str()));
+        let injected = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match perceptions.next().await.unwrap() {
+                    Event::Perception { payload, .. }
+                        if payload.source == PerceptionSource::System =>
+                    {
+                        return payload.content;
+                    }
+                    _ => continue,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            injected.contains("Previous tool activity"),
+            "resume must inject tool history: {injected}"
+        );
+        assert!(injected.contains("ls("), "{injected}");
     }
 
     #[tokio::test]

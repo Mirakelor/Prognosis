@@ -131,7 +131,7 @@ impl Remember {
         }
         if let Some(meta) = self.index.sessions.iter_mut().find(|meta| meta.id == id) {
             meta.turns = turns.len();
-            if meta.summary.is_empty() && !content.is_empty() {
+            if role == "user" && meta.summary.is_empty() && !content.is_empty() {
                 meta.summary = content.chars().take(60).collect();
             }
         }
@@ -347,6 +347,24 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].role, "user");
         assert_eq!(turns[1].content, "hi");
+    }
+
+    #[tokio::test]
+    async fn tool_turns_persist_but_do_not_set_summary() {
+        let dir = temp_dir();
+        let mut remember = Remember::new(Arc::new(SummarizePort), dir.path());
+        let id = remember.start_session().await;
+        remember.append_turn("user", "hello");
+        remember.append_turn("tool", "ls({\"dirPath\":\".\"}) -> src/ [allowed]");
+
+        let loaded = Remember::new(Arc::new(SummarizePort), dir.path());
+        let turns = loaded.load_session(&id);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].role, "tool");
+        assert!(turns[1].content.contains("ls("), "{}", turns[1].content);
+        let meta = loaded.list_sessions().iter().find(|m| m.id == id).unwrap();
+        assert_eq!(meta.summary, "hello", "summary must come from the user turn only");
+        assert_eq!(meta.turns, 2);
     }
 
     #[tokio::test]
