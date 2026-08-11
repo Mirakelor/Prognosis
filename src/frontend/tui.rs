@@ -46,6 +46,9 @@ pub async fn run(app: App) -> Result<(), Box<dyn Error>> {
     }));
     let git = git_info(&app);
     let mut ui = UiState::new();
+    if let Some(notice) = &app.startup_notice {
+        ui.push_system(notice);
+    }
     if app.needs_setup() {
         ui.mode = Mode::Setup;
         ui.setup = Some(SetupState {
@@ -67,7 +70,8 @@ pub async fn run(app: App) -> Result<(), Box<dyn Error>> {
     let _ = crossterm::execute!(
         io::stdout(),
         crossterm::terminal::EnterAlternateScreen,
-        crossterm::cursor::SetCursorStyle::SteadyBlock
+        crossterm::cursor::SetCursorStyle::SteadyBlock,
+        crossterm::event::EnableBracketedPaste
     );
     let _ = terminal.clear();
     let _ = io::stdout().flush();
@@ -86,7 +90,8 @@ pub async fn run(app: App) -> Result<(), Box<dyn Error>> {
     let _ = crossterm::execute!(
         io::stdout(),
         PopKeyboardEnhancementFlags,
-        crossterm::cursor::SetCursorStyle::DefaultUserShape
+        crossterm::cursor::SetCursorStyle::DefaultUserShape,
+        crossterm::event::DisableBracketedPaste
     );
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
     crossterm::terminal::disable_raw_mode()?;
@@ -408,9 +413,29 @@ async fn handle_key(
     event: TermEvent,
     spawned: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), Box<dyn Error>> {
-    let TermEvent::Key(key) = event else {
-        return Ok(());
-    };
+    match event {
+        TermEvent::Paste(text) => {
+            if matches!(ui.mode, Mode::Chat | Mode::Command) {
+                crate::frontend::input::insert_text(&mut ui.input, &text);
+                if ui.input.buffer.starts_with('/') {
+                    ui.mode = Mode::Command;
+                } else {
+                    ui.mode = Mode::Chat;
+                }
+            }
+            Ok(())
+        }
+        TermEvent::Key(key) => handle_key_event(app, ui, key, spawned).await,
+        _ => Ok(()),
+    }
+}
+
+async fn handle_key_event(
+    app: &Arc<Mutex<App>>,
+    ui: &mut UiState,
+    key: KeyEvent,
+    spawned: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+) -> Result<(), Box<dyn Error>> {
     if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Err("quit".into());
     }

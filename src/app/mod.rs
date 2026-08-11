@@ -749,6 +749,7 @@ pub struct App {
     executed_calls: Vec<(String, String)>,
     cancelled_tool_ids: std::collections::HashSet<String>,
     cycle: u64,
+    pub startup_notice: Option<String>,
 }
 
 const TRACE_ARG_LIMIT: usize = 200;
@@ -919,6 +920,7 @@ impl App {
             executed_calls: Vec::new(),
             cancelled_tool_ids: std::collections::HashSet::new(),
             cycle: 0,
+            startup_notice: None,
         };
         register_default_tools(&mut app);
         let tool_defs: Vec<ToolDefinition> = app
@@ -1040,19 +1042,12 @@ impl App {
         tool_lines.reverse();
         tool_lines.truncate(10);
         tool_lines.reverse();
-        let mut note = format!(
-            "(Session #{id} resumed — the full conversation history is loaded; continue the earlier work.)"
-        );
-        if !tool_lines.is_empty() {
-            note.push_str(&format!(
-                "\n(Previous tool activity — tools that already ran in this session; do not re-run them without a reason:\n{}\n)",
-                tool_lines.join("\n")
-            ));
-        }
         let meta = self.next_meta();
-        self.runtime
-            .publish(Event::RestoreDialogue { meta, turns: dialogue });
-        self.inject_context(&note);
+        self.runtime.publish(Event::RestoreDialogue {
+            meta,
+            turns: dialogue,
+            tools: tool_lines.into_iter().map(str::to_string).collect(),
+        });
         self.remember.set_current(id);
         Ok(format!("resumed session #{id} ({} turns)", turns.len()))
     }
@@ -1084,7 +1079,9 @@ impl App {
                 entry.highlights.join(", ")
             ));
         }
-        self.inject_context(&text);
+        let meta = self.next_meta();
+        self.runtime
+            .publish(Event::MemoryInject { meta, summary: text });
         Ok(format!("remembered session #{id}"))
     }
 
@@ -1271,19 +1268,6 @@ impl App {
                 source: PerceptionSource::User,
                 content: text.to_string(),
                 salience: 0.5,
-            },
-        });
-    }
-
-    pub fn inject_context(&mut self, background: &str) {
-        let meta = self.next_meta();
-        self.runtime.publish(Event::CycleStart { meta });
-        self.runtime.publish(Event::Perception {
-            meta,
-            payload: PerceptionPayload {
-                source: PerceptionSource::System,
-                content: format!("(Conversation background)\n{background}"),
-                salience: 0.3,
             },
         });
     }
@@ -2131,29 +2115,30 @@ mod tests {
         app.remember.append_turn("tool", "ls({\"dirPath\":\".\"}) -> src/ [allowed]");
         let id = app.remember.list_sessions()[0].id.clone();
         let mut perceptions = Box::pin(app.runtime.bus().subscribe_kinds(&[EventKind::Perception]));
+        let mut restores = Box::pin(app.runtime.bus().subscribe_kinds(&[EventKind::WorkingMemory]));
         let message = app.resume_session(&id).expect("resume should succeed");
         assert!(message.contains("resumed session"), "{message}");
         assert!(message.contains(&id), "{message}");
         assert_eq!(app.remember.current_session(), Some(id.as_str()));
-        let injected = tokio::time::timeout(Duration::from_secs(2), async {
+        let restore = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                match perceptions.next().await.unwrap() {
-                    Event::Perception { payload, .. }
-                        if payload.source == PerceptionSource::System =>
-                    {
-                        return payload.content;
-                    }
+                match restores.next().await.unwrap() {
+                    Event::RestoreDialogue { turns, tools, .. } => return (turns, tools),
                     _ => continue,
                 }
             }
         })
         .await
         .unwrap();
+        assert_eq!(restore.0.len(), 1, "dialogue must carry the paired turns");
+        assert_eq!(restore.0[0].user, "hello");
+        assert_eq!(restore.1.len(), 1, "tool history must be carried");
+        assert!(restore.1[0].contains("ls("), "{:?}", restore.1);
+        let stray = tokio::time::timeout(Duration::from_millis(400), perceptions.next()).await;
         assert!(
-            injected.contains("Previous tool activity"),
-            "resume must inject tool history: {injected}"
+            stray.is_err(),
+            "resume must not trigger generation (no perception events)"
         );
-        assert!(injected.contains("ls("), "{injected}");
     }
 
     #[tokio::test]

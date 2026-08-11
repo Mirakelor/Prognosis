@@ -60,6 +60,7 @@ pub struct PredictionActor {
     stream_text: String,
     batch_generated: bool,
     meta_state: Option<crate::runtime::types::MetaState>,
+    restored_tools: Vec<String>,
 }
 
 impl PredictionActor {
@@ -82,6 +83,7 @@ impl PredictionActor {
             stream_text: String::new(),
             batch_generated: false,
             meta_state: None,
+            restored_tools: Vec::new(),
         }
     }
 
@@ -339,6 +341,12 @@ impl PredictionActor {
                 self.current_task
             )));
         }
+        if !self.restored_tools.is_empty() {
+            messages.push(Message::system(format!(
+                "(Previous tool activity — tools that already ran in this session; do not re-run them without a reason:\n{}\n)",
+                self.restored_tools.join("\n")
+            )));
+        }
         for turn in &self.wm_snapshot.dialogue {
             messages.push(Message::user(turn.user.clone()));
             messages.push(Message::assistant(turn.assistant.clone()));
@@ -588,12 +596,21 @@ impl CognitiveActor for PredictionActor {
                 self.last_trajectory = trajectory.clone();
                 vec![]
             }
+            Event::RestoreDialogue { tools, .. } => {
+                self.restored_tools = tools.clone();
+                vec![]
+            }
             Event::CompactContext { summary, .. } => {
                 self.session_summary = summary.clone();
                 self.wm_snapshot.dialogue.clear();
                 self.tool_rounds.clear();
                 self.stray_results.clear();
                 self.last_messages.clear();
+                self.restored_tools.clear();
+                vec![]
+            }
+            Event::MemoryInject { summary, .. } => {
+                self.session_summary = summary.clone();
                 vec![]
             }
             Event::ContextUpdate { rules, skills, .. } => {

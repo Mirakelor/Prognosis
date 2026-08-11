@@ -26,6 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut adapter: Option<String> = None;
     let mut model: Option<String> = None;
     let mut supervisor: Option<String> = None;
+    let mut resume_latest = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -33,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--adapter" => adapter = args.next(),
             "--model" => model = args.next(),
             "--supervisor" => supervisor = args.next(),
+            "--continue" => resume_latest = true,
             "--help" => {
                 println!(
                     "usage: prognosis [OPTIONS]\n\
@@ -41,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                      \x20 --adapter <openai|deepseek>  LLM adapter (default: auto-detected from DEEPSEEK_API_KEY / OPENAI_API_KEY, falls back to deepseek)\n\
                      \x20 --model <NAME>               Initial model name (overrides the stored default model)\n\
                      \x20 --supervisor <on|off>        LLM supervisor that reviews tool calls before they run (default: on)\n\
+                     \x20 --continue                   Resume the most recent session on startup (equivalent to /continue)\n\
                      \x20 --help                       Show this help and exit\n\
                      \n\
                      Interactive commands (type / inside the TUI):\n\
@@ -66,6 +69,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut app = App::new(config)?;
     app.start().await;
+    if resume_latest {
+        match app.continue_session() {
+            Ok(message) => app.startup_notice = Some(format!("(resumed) {message}")),
+            Err(error) => app.startup_notice = Some(format!("(continue failed) {error}")),
+        }
+    }
     prognosis::frontend::run(app).await?;
     Ok(())
 }

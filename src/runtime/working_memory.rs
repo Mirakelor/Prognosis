@@ -111,7 +111,7 @@ impl CognitiveActor for WorkingMemoryActor {
                     snapshot: self.snapshot(),
                 }]
             }
-            Event::RestoreDialogue { meta, turns } => {
+            Event::RestoreDialogue { meta, turns, .. } => {
                 self.dialogue = turns.clone();
                 if self.dialogue.len() > MAX_DIALOGUE {
                     self.dialogue.drain(..self.dialogue.len() - MAX_DIALOGUE);
@@ -389,6 +389,7 @@ mod tests {
                 user: "question".into(),
                 assistant: "answer".into(),
             }],
+            tools: vec!["ls({\"dirPath\":\".\"}) -> src/ [allowed]".into()],
         });
 
         let update = tokio::time::timeout(Duration::from_secs(2), async {

@@ -60,7 +60,7 @@ impl Event {
             Event::CycleStart { .. } | Event::CycleComplete { .. } => EventKind::Cycle,
             Event::Tick { .. } => EventKind::Time,
             Event::LanguageInsight { .. } => EventKind::Language,
-            Event::CompactContext { .. } | Event::ContextUpdate { .. } | Event::ConversationCleared { .. } => EventKind::Context,
+            Event::CompactContext { .. } | Event::ContextUpdate { .. } | Event::ConversationCleared { .. } | Event::MemoryInject { .. } => EventKind::Context,
             Event::RequestState { .. } | Event::StateResponse { .. } => EventKind::State,
             Event::Shutdown => EventKind::State,
         }
@@ -96,6 +96,7 @@ impl Event {
             | Event::CompactContext { meta, .. }
             | Event::ContextUpdate { meta, .. }
             | Event::ConversationCleared { meta }
+            | Event::MemoryInject { meta, .. }
             | Event::CycleStart { meta }
             | Event::CycleComplete { meta, .. }
             | Event::Tick { meta }
@@ -181,6 +182,7 @@ pub enum Event {
     RestoreDialogue {
         meta: EventMeta,
         turns: Vec<DialogueTurn>,
+        tools: Vec<String>,
     },
     MemoryRetrieved {
         meta: EventMeta,
@@ -215,6 +217,10 @@ pub enum Event {
         quality: f32,
     },
     CompactContext {
+        meta: EventMeta,
+        summary: String,
+    },
+    MemoryInject {
         meta: EventMeta,
         summary: String,
     },
