@@ -836,13 +836,18 @@ fn draw_divider(frame: &mut Frame, message_area: Rect) {
 
 fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
     if ui.input.buffer.is_empty() {
+        let placeholder = if ui.input.pending_submit.is_empty() {
+            "Ask anything, / for slash commands".to_string()
+        } else {
+            format!(
+                "Ask anything, / for slash commands · {} queued — will send when the agent finishes",
+                ui.input.pending_submit.len()
+            )
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("❯ ", theme::PINK),
-                Span::styled(
-                    "Ask anything, / for slash commands",
-                    theme::meta_style().italic(),
-                ),
+                Span::styled(placeholder, theme::meta_style().italic()),
             ]))
             .wrap(Wrap { trim: false }),
             area,
@@ -1203,6 +1208,35 @@ fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitI
     let right_text = "↑ History · Esc Stop · Ctrl+D Quit";
     let right_width = right_text.chars().count() as u16;
     let left_max = area.width.saturating_sub(right_width + 2) as usize;
+    let queued = ui.input.pending_submit.len();
+    if queued > 0 {
+        let mut text = format!("{queued} queued — will send when the agent finishes");
+        let budget = left_max.saturating_sub(3) as usize;
+        if text.chars().count() > budget {
+            let cut: String = text.chars().take(budget.saturating_sub(1)).collect();
+            text = format!("{cut}…");
+        }
+        let left = Line::from(vec![
+            Span::styled("◆ ", theme::PINK),
+            Span::styled(text, theme::meta_style()),
+        ]);
+        frame.render_widget(Paragraph::new(left), Rect {
+            x: 1,
+            y: area.y,
+            width: area.width.saturating_sub(2),
+            height: 1,
+        });
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(right_text, theme::meta_style()))),
+            Rect {
+                x: area.width.saturating_sub(right_width + 1),
+                y: area.y,
+                width: right_width,
+                height: 1,
+            },
+        );
+        return;
+    }
     let mut left = Line::from(vec![
         Span::styled("◐ ", theme::PINK),
         Span::styled("ctx ", theme::meta_style()),
