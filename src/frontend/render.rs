@@ -1210,16 +1210,16 @@ fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitI
     let left_max = area.width.saturating_sub(right_width + 2) as usize;
     let queued = ui.input.pending_submit.len();
     if queued > 0 {
-        let mut text = format!("{queued} queued — will send when the agent finishes");
-        let budget = left_max.saturating_sub(3) as usize;
-        if text.chars().count() > budget {
-            let cut: String = text.chars().take(budget.saturating_sub(1)).collect();
-            text = format!("{cut}…");
-        }
-        let left = Line::from(vec![
+        let mut spans = vec![
             Span::styled("◆ ", theme::PINK),
-            Span::styled(text, theme::meta_style()),
-        ]);
+            Span::styled(format!("{queued} queued"), theme::meta_style()),
+        ];
+        let path = fit_path(&ctx.project_dir, left_max.saturating_sub(14));
+        if !path.is_empty() {
+            spans.push(Span::styled(" · ", theme::divider_style()));
+            spans.push(Span::styled(path, theme::meta_style()));
+        }
+        let left = Line::from(spans);
         frame.render_widget(Paragraph::new(left), Rect {
             x: 1,
             y: area.y,
@@ -1277,11 +1277,14 @@ fn fit_path(path: &str, max: usize) -> String {
         return String::new();
     }
     let mut kept = String::new();
+    let mut kept_width = 0usize;
     for c in path.chars().rev() {
-        if kept.chars().count() >= max.saturating_sub(1) {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if kept_width + cw > max.saturating_sub(1) {
             break;
         }
         kept.push(c);
+        kept_width += cw;
     }
     let tail = kept.chars().rev().collect::<String>();
     format!("…{tail}")
@@ -1406,6 +1409,16 @@ mod tests {
     fn fit_path_truncates_tail_when_too_long() {
         assert_eq!(fit_path("/home/user/project/src/main.rs", 12), "…src/main.rs");
         assert_eq!(fit_path("/a/very/long/path/here", 4), "…ere");
+    }
+
+    #[test]
+    fn fit_path_counts_display_width_not_chars() {
+        let fitted = fit_path("/home/winterist/桌面/project", 16);
+        assert_eq!(fitted, "…st/桌面/project");
+        assert!(
+            unicode_width::UnicodeWidthStr::width(fitted.as_str()) <= 16,
+            "fitted path must not exceed the width budget"
+        );
     }
 
     #[test]
