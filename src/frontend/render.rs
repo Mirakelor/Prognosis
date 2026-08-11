@@ -1044,6 +1044,7 @@ fn draw_help(frame: &mut Frame, ui: &mut UiState, area: Rect) {
         ("↑/↓", "Input History / Scroll Panels"),
         ("Tab", "Complete Command / Expand & Collapse Folds"),
         ("PageUp/Down", "Scroll Message History"),
+        ("Paste", "Insert text (multi-line ok) — Enter sends"),
         ("Ctrl+C", "Interrupt Generation / Quit when idle"),
         ("Ctrl+D", "Quit"),
     ];

@@ -77,6 +77,8 @@ Requirements: Rust (stable) + a C linker (`cc`/`gcc`/`clang`). The dependency tr
 prognosis
 ```
 
+Resume where you left off on startup: `prognosis --continue` restores the most recent session (equivalent to `/continue`). After any restore (`/continue`, `/resume`, `/history`, `/remember`), the agent loads the history into context but **waits for your next message** before replying.
+
 1. **Add a model**: type `/models`, choose *add*, and paste your API key. Keys are stored in `~/.prognosis/models.json` — **never in the project**, so they can't leak into git. Supported: DeepSeek and any OpenAI-compatible endpoint (custom `base_url`).
 2. **Start working**: type your request in any language — the agent replies in the same language.
 3. **Approvals**: some tool calls ask for confirmation before running:

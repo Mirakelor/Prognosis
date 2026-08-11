@@ -11,6 +11,7 @@ pub const TIPS: &[&str] = &[
     "Scheduled tasks keep running and report into the conversation",
     "Use /history to reload a past session, /continue for the most recent one",
     "Use /remember to inject a summarized memory from an archived session",
+    "Paste inserts text without sending; press Enter to send",
 ];
 
 pub fn pick_tip() -> &'static str {
