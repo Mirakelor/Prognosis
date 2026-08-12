@@ -6,9 +6,10 @@ pub fn insert_char(state: &mut InputState, c: char) {
 }
 
 pub fn insert_text(state: &mut InputState, text: &str) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let byte = char_index_to_byte(&state.buffer, state.cursor);
-    state.buffer.insert_str(byte, text);
-    state.cursor += text.chars().count();
+    state.buffer.insert_str(byte, &normalized);
+    state.cursor += normalized.chars().count();
 }
 
 pub fn backspace(state: &mut InputState) {
@@ -146,6 +147,14 @@ mod tests {
         move_home(&mut state);
         newline(&mut state);
         assert_eq!(state.buffer, "\nline1\nline2");
+    }
+
+    #[test]
+    fn paste_carriage_returns_normalized_to_newlines() {
+        let mut state = InputState::new();
+        insert_text(&mut state, "first\r\nsecond\rthird");
+        assert_eq!(state.buffer, "first\nsecond\nthird");
+        assert_eq!(state.cursor, 18);
     }
 
     #[test]

@@ -189,7 +189,7 @@ fn input_area_height(ui: &UiState, width: u16) -> u16 {
     let mut lines = 1usize;
     let mut current = 0usize;
     for c in ui.input.buffer.chars() {
-        if c == '\n' {
+        if c == '\n' || c == '\r' {
             lines += 1;
             current = 0;
             continue;
@@ -856,11 +856,12 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
         return;
     }
     let buffer = &ui.input.buffer;
+    let normalized = buffer.replace('\r', "\n");
     let cursor_byte = char_index_to_byte(buffer, ui.input.cursor);
-    let lines: Vec<&str> = buffer.split('\n').collect();
-    let cursor_line = buffer[..cursor_byte].matches('\n').count();
-    let line_start = buffer[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let cursor_in_line = buffer[line_start..cursor_byte].chars().count();
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let cursor_line = normalized[..cursor_byte].matches('\n').count();
+    let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
     let mut rendered = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         if index == 0 {
@@ -1305,6 +1306,13 @@ mod tests {
 
     fn row_text(row: &Line<'static>) -> String {
         row.spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn input_height_counts_cr_as_newline() {
+        let mut ui = UiState::new();
+        ui.input.buffer = "first\rsecond".to_string();
+        assert_eq!(input_area_height(&ui, 120), 3, "\\r must count as a line break");
     }
 
     #[test]
