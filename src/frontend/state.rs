@@ -124,7 +124,7 @@ pub struct UiState {
     pub mode: Mode,
     pub input: InputState,
     pub cognitive: CognitiveSnapshot,
-    pub total_tokens: usize,
+    pub context_tokens: usize,
     pub selector: Option<Selector>,
     pub setup: Option<SetupState>,
     pub scroll_offset: usize,
@@ -159,7 +159,7 @@ impl UiState {
             mode: Mode::Chat,
             input: InputState::new(),
             cognitive: CognitiveSnapshot::default(),
-            total_tokens: 0,
+            context_tokens: 0,
             selector: None,
             setup: None,
             scroll_offset: 0,
@@ -346,7 +346,7 @@ impl UiState {
     pub fn clear_conversation(&mut self, summary: &str) {
         self.messages.clear();
         self.streaming = None;
-        self.total_tokens = 0;
+        self.context_tokens = 0;
         self.push_system(summary);
     }
 }

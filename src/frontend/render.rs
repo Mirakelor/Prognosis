@@ -1193,7 +1193,7 @@ fn draw_setup(frame: &mut Frame, ui: &UiState, area: Rect) {
 
 fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitInfo, area: Rect) {
     let percent = if ctx.context_limit > 0 {
-        ui.total_tokens.checked_mul(100).map_or(0, |tokens| {
+        ui.context_tokens.checked_mul(100).map_or(0, |tokens| {
             tokens.checked_div(ctx.context_limit).unwrap_or(0)
         })
     } else {
@@ -1246,7 +1246,7 @@ fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitI
         Span::styled(
             format!(
                 " {percent}% · {}k/{}",
-                ui.total_tokens / 1000,
+                ui.context_tokens / 1000,
                 if ctx.context_limit >= 1_000_000 {
                     format!("{}M", ctx.context_limit / 1_000_000)
                 } else {

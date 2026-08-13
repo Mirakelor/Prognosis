@@ -275,7 +275,7 @@ pub fn status_lines(
         });
     }
     let percent = if ctx.context_limit > 0 {
-        ui.total_tokens.checked_mul(100).map_or(0.0, |tokens| {
+        ui.context_tokens.checked_mul(100).map_or(0.0, |tokens| {
             tokens as f32 / ctx.context_limit as f32
         })
     } else {
@@ -287,7 +287,7 @@ pub fn status_lines(
         text: format!(
             "context     {}  {percent:.0}% · {}k/{}",
             bar(percent / 100.0, 10),
-            ui.total_tokens / 1000,
+            ui.context_tokens / 1000,
             if ctx.context_limit >= 1_000_000 {
                 format!("{}M", ctx.context_limit / 1_000_000)
             } else {

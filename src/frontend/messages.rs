@@ -29,7 +29,7 @@ pub fn handle_event(ui: &mut UiState, event: Event) -> Option<Event> {
         }
         Event::StreamEnd { usage, .. } => {
             if let Some(usage) = usage {
-                ui.total_tokens += usage.total_tokens as usize;
+                ui.context_tokens = usage.prompt_tokens as usize;
             }
             None
         }
@@ -296,25 +296,28 @@ mod tests {
     }
 
     #[test]
-    fn stream_end_accumulates_total_tokens() {
+    fn stream_end_tracks_latest_context_prompt_tokens() {
         let mut ui = UiState::new();
         handle_event(&mut ui, Event::StreamEnd {
             meta: meta(),
             usage: Some(crate::adapter::types::TokenUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 3000,
+                prompt_tokens: 8000,
+                completion_tokens: 2000,
+                total_tokens: 10000,
             }),
         });
         handle_event(&mut ui, Event::StreamEnd {
             meta: meta(),
             usage: Some(crate::adapter::types::TokenUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 2500,
+                prompt_tokens: 12000,
+                completion_tokens: 3000,
+                total_tokens: 15000,
             }),
         });
-        assert_eq!(ui.total_tokens, 5500, "tokens must accumulate across turns");
+        assert_eq!(
+            ui.context_tokens, 12000,
+            "context length is the latest prompt_tokens, not accumulated spend"
+        );
     }
 
     #[test]
