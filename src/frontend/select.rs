@@ -285,10 +285,14 @@ pub fn status_lines(
         title: false,
         color: theme::META,
         text: format!(
-            "context     {}  {percent:.0}% · {}k/{}k",
+            "context     {}  {percent:.0}% · {}k/{}",
             bar(percent / 100.0, 10),
             ui.total_tokens / 1000,
-            ctx.context_limit / 1000
+            if ctx.context_limit >= 1_000_000 {
+                format!("{}M", ctx.context_limit / 1_000_000)
+            } else {
+                format!("{}k", ctx.context_limit / 1000)
+            }
         ),
     });
     rows.push(StatusRow {

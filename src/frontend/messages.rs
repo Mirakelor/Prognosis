@@ -29,7 +29,7 @@ pub fn handle_event(ui: &mut UiState, event: Event) -> Option<Event> {
         }
         Event::StreamEnd { usage, .. } => {
             if let Some(usage) = usage {
-                ui.total_tokens = usage.total_tokens as usize;
+                ui.total_tokens += usage.total_tokens as usize;
             }
             None
         }
@@ -293,6 +293,28 @@ mod tests {
         assert_eq!(ui.cognitive.drive_homeostatic, 0.7);
         assert_eq!(ui.cognitive.drive_curiosity, 0.4);
         assert_eq!(ui.cognitive.drive_salience, 0.9);
+    }
+
+    #[test]
+    fn stream_end_accumulates_total_tokens() {
+        let mut ui = UiState::new();
+        handle_event(&mut ui, Event::StreamEnd {
+            meta: meta(),
+            usage: Some(crate::adapter::types::TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 3000,
+            }),
+        });
+        handle_event(&mut ui, Event::StreamEnd {
+            meta: meta(),
+            usage: Some(crate::adapter::types::TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 2500,
+            }),
+        });
+        assert_eq!(ui.total_tokens, 5500, "tokens must accumulate across turns");
     }
 
     #[test]

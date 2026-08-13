@@ -1244,7 +1244,15 @@ fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitI
         Span::styled("ctx ", theme::meta_style()),
         Span::styled(bar, theme::PINK),
         Span::styled(
-            format!(" {percent}% · {}k/{}k", ui.total_tokens / 1000, ctx.context_limit / 1000),
+            format!(
+                " {percent}% · {}k/{}",
+                ui.total_tokens / 1000,
+                if ctx.context_limit >= 1_000_000 {
+                    format!("{}M", ctx.context_limit / 1_000_000)
+                } else {
+                    format!("{}k", ctx.context_limit / 1000)
+                }
+            ),
             theme::meta_style(),
         ),
     ]);
