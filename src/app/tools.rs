@@ -121,6 +121,46 @@ pub fn read_file(project_dir: &Path, filepath: &str) -> Result<String, String> {
     })
 }
 
+fn unified_diff(original: &str, updated: &str) -> String {
+    let a: Vec<&str> = original.lines().collect();
+    let b: Vec<&str> = updated.lines().collect();
+    let (n, m) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if a[i] == b[j] {
+                dp[i + 1][j + 1] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    let mut lines = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if a[i] == b[j] {
+            lines.push(format!(" {}", a[i]));
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            lines.push(format!("-{}", a[i]));
+            i += 1;
+        } else {
+            lines.push(format!("+{}", b[j]));
+            j += 1;
+        }
+    }
+    while i < n {
+        lines.push(format!("-{}", a[i]));
+        i += 1;
+    }
+    while j < m {
+        lines.push(format!("+{}", b[j]));
+        j += 1;
+    }
+    format!("@@ -{n} +{m} @@\n{}", lines.join("\n"))
+}
+
 pub fn create_new_file(
     project_dir: &Path,
     filepath: &str,
@@ -133,7 +173,10 @@ pub fn create_new_file(
         ));
     }
     std::fs::write(&file, contents).map_err(|err| format!("write failed: {err}"))?;
-    Ok("File created successfuly".to_string())
+    Ok(format!(
+        "File created successfully\n{}",
+        unified_diff("", contents)
+    ))
 }
 
 pub fn run_terminal_command(project_dir: &Path, command: &str, wait: bool) -> String {
@@ -941,8 +984,9 @@ pub fn single_find_and_replace(
     } else {
         content.replacen(old_string, new_string, 1)
     };
+    let diff = unified_diff(&content, &new_content);
     std::fs::write(&file, new_content).map_err(|err| format!("write failed: {err}"))?;
-    Ok(format!("Edited {filepath}"))
+    Ok(format!("Edited {filepath}\n{diff}"))
 }
 
 pub fn edit_existing_file(
@@ -1052,7 +1096,10 @@ pub fn edit_existing_file(
         );
     }
     std::fs::write(&file, &joined).map_err(|err| format!("write failed: {err}"))?;
-    Ok(format!("Edited {filepath}"))
+    Ok(format!(
+        "Edited {filepath}\n{}",
+        unified_diff(&content, &joined)
+    ))
 }
 
 fn strip_codeblock(changes: &str) -> &str {
@@ -1509,7 +1556,9 @@ mod tests {
             .unwrap_err()
             .contains("does not exist"));
         let created = create_new_file(dir.path(), "new.txt", "content").unwrap();
-        assert_eq!(created, "File created successfuly");
+        assert!(created.contains("File created successfully"), "{created}");
+        assert!(created.contains("@@"), "output must carry a diff: {created}");
+        assert!(created.contains("+content"), "{created}");
         let err = create_new_file(dir.path(), "new.txt", "again").unwrap_err();
         assert!(err.contains("already exists"));
     }
@@ -1567,6 +1616,19 @@ mod tests {
         assert!(none.contains("no results"), "{none}");
         let bad = grep_search(dir.path(), "[");
         assert!(bad.contains("invalid regex"), "{bad}");
+    }
+
+    #[test]
+    fn unified_diff_marks_added_and_removed_lines() {
+        let out = unified_diff("a\nb\nc\n", "a\nx\nc\n");
+        assert!(out.contains("@@ -3 +3 @@"), "{out}");
+        assert!(out.contains("-b"), "{out}");
+        assert!(out.contains("+x"), "{out}");
+        assert!(!out.contains("-a"), "{out}");
+        let created = unified_diff("", "l1\nl2");
+        assert!(created.starts_with("@@ -0 +2 @@"), "{created}");
+        assert!(created.contains("+l1"), "{created}");
+        assert!(created.contains("+l2"), "{created}");
     }
 
     #[test]
