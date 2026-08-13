@@ -38,7 +38,7 @@ fn run(cmd: &str) -> Option<String> {
 pub enum TaskKind {
     Delay { due: Instant },
     Schedule { interval: Duration, next: Instant },
-    Monitor { condition: Condition, check_every: Duration, deadline: Option<Instant>, last_check: Option<Instant> },
+    Monitor { condition: Condition, check_every: Duration, deadline: Option<Instant>, last_check: Option<Instant>, checking: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +77,7 @@ impl ScheduledTask {
 pub enum Fired {
     Execute { id: u64, action: TaskAction, label: String },
     MonitorTimeout { id: u64 },
+    Check { id: u64, condition: Condition },
 }
 
 pub struct Scheduler {
@@ -128,58 +129,51 @@ impl Scheduler {
         while i < self.tasks.len() {
             let mut op = Op::None;
             let mut reschedule: Option<Instant> = None;
-            let mut check_condition = false;
-            {
-                let task = &self.tasks[i];
-                match &task.kind {
-                    TaskKind::Delay { due } => {
-                        if now >= *due {
-                            op = Op::Remove {
-                                id: task.id,
-                                action: task.action.clone(),
-                                label: "delay".into(),
-                            };
-                        }
-                    }
-                    TaskKind::Schedule { interval, next } => {
-                        if now >= *next {
-                            op = Op::FireKeep {
-                                id: task.id,
-                                action: task.action.clone(),
-                                label: "schedule tick".into(),
-                            };
-                            reschedule = Some(now + *interval);
-                        }
-                    }
-                    TaskKind::Monitor { check_every, deadline, last_check, .. } => {
-                        if deadline.is_some_and(|d| now >= d) {
-                            op = Op::Timeout { id: task.id };
-                        } else {
-                            let due = match last_check {
-                                Some(last) => now >= *last + *check_every,
-                                None => true,
-                            };
-                            if due {
-                                check_condition = true;
-                            }
-                        }
+            match &self.tasks[i].kind {
+                TaskKind::Delay { due } => {
+                    if now >= *due {
+                        op = Op::Remove {
+                            id: self.tasks[i].id,
+                            action: self.tasks[i].action.clone(),
+                            label: "delay".into(),
+                        };
                     }
                 }
+                TaskKind::Schedule { interval, next } => {
+                    if now >= *next {
+                        op = Op::FireKeep {
+                            id: self.tasks[i].id,
+                            action: self.tasks[i].action.clone(),
+                            label: "schedule tick".into(),
+                        };
+                        reschedule = Some(now + *interval);
+                    }
+                }
+                TaskKind::Monitor { .. } => {}
             }
-            if check_condition {
-                let condition = match &self.tasks[i].kind {
-                    TaskKind::Monitor { condition, .. } => condition.clone(),
-                    _ => unreachable!(),
-                };
-                if condition.holds() {
-                    let task = &self.tasks[i];
-                    op = Op::Remove {
-                        id: task.id,
-                        action: task.action.clone(),
-                        label: "monitor matched".into(),
+            let task_id = self.tasks[i].id;
+            if let TaskKind::Monitor {
+                check_every,
+                deadline,
+                last_check,
+                checking,
+                condition,
+            } = &mut self.tasks[i].kind
+            {
+                if deadline.is_some_and(|d| now >= d) {
+                    op = Op::Timeout { id: task_id };
+                } else if !*checking {
+                    let due = match last_check {
+                        Some(last) => now >= *last + *check_every,
+                        None => true,
                     };
-                } else if let TaskKind::Monitor { last_check, .. } = &mut self.tasks[i].kind {
-                    *last_check = Some(now);
+                    if due {
+                        *checking = true;
+                        fired.push(Fired::Check {
+                            id: task_id,
+                            condition: condition.clone(),
+                        });
+                    }
                 }
             }
             match op {
@@ -203,6 +197,25 @@ impl Scheduler {
                 Op::None => {}
             }
             i += 1;
+        }
+        fired
+    }
+
+    pub fn check_result(&mut self, id: u64, holds: bool, now: Instant) -> Vec<Fired> {
+        let mut fired = Vec::new();
+        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == id)
+            && let TaskKind::Monitor { last_check, checking, .. } = &mut task.kind
+        {
+            *checking = false;
+            if holds {
+                let action = task.action.clone();
+                let label = "monitor matched".to_string();
+                let tid = task.id;
+                self.tasks.retain(|t| t.id != tid);
+                fired.push(Fired::Execute { id: tid, action, label });
+            } else {
+                *last_check = Some(now);
+            }
         }
         fired
     }
@@ -263,12 +276,20 @@ mod tests {
                 check_every: Duration::from_secs(1),
                 deadline: Some(Instant::now() + Duration::from_secs(60)),
                 last_check: None,
+                checking: false,
             },
             action(),
         );
         let now = Instant::now();
         let fired = scheduler.poll(now);
-        assert_eq!(fired.len(), 1);
+        assert!(matches!(fired[0], Fired::Check { .. }), "poll must request an async check");
+        let id = match &fired[0] {
+            Fired::Check { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        let matched = scheduler.check_result(id, true, now);
+        assert_eq!(matched.len(), 1);
+        assert!(matches!(matched[0], Fired::Execute { .. }));
         assert!(scheduler.tasks().is_empty());
     }
 
@@ -283,13 +304,27 @@ mod tests {
                 check_every: Duration::from_secs(1),
                 deadline: Some(Instant::now() + Duration::from_secs(60)),
                 last_check: None,
+                checking: false,
             },
             action(),
         );
         let now = Instant::now();
-        assert!(scheduler.poll(now).is_empty());
+        let fired = scheduler.poll(now);
+        assert_eq!(fired.len(), 1, "first poll requests a check");
+        let id = match &fired[0] {
+            Fired::Check { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        assert!(scheduler.check_result(id, false, now).is_empty());
+        assert_eq!(scheduler.tasks().len(), 1, "missed check keeps the task");
         std::fs::write(&path, "x").unwrap();
-        assert_eq!(scheduler.poll(now + Duration::from_secs(2)).len(), 1);
+        let fired = scheduler.poll(now + Duration::from_secs(2));
+        assert_eq!(fired.len(), 1, "due again after check_every");
+        let id = match &fired[0] {
+            Fired::Check { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        assert_eq!(scheduler.check_result(id, true, now).len(), 1);
         assert!(scheduler.tasks().is_empty());
         let _ = std::fs::remove_file(&path);
     }
@@ -303,11 +338,12 @@ mod tests {
                 check_every: Duration::from_secs(1),
                 deadline: Some(Instant::now() + Duration::from_secs(5)),
                 last_check: None,
+                checking: false,
             },
             action(),
         );
         let now = Instant::now();
-        assert!(scheduler.poll(now).is_empty());
+        assert_eq!(scheduler.poll(now).len(), 1, "first poll requests a check");
         let fired = scheduler.poll(now + Duration::from_secs(6));
         assert!(matches!(fired[0], Fired::MonitorTimeout { .. }));
         assert!(scheduler.tasks().is_empty());
@@ -324,14 +360,27 @@ mod tests {
                 check_every: Duration::from_secs(10),
                 deadline: Some(Instant::now() + Duration::from_secs(60)),
                 last_check: None,
+                checking: false,
             },
             action(),
         );
         let now = Instant::now();
-        assert!(scheduler.poll(now).is_empty());
+        let fired = scheduler.poll(now);
+        assert_eq!(fired.len(), 1, "first poll requests a check");
+        let id = match &fired[0] {
+            Fired::Check { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        assert!(scheduler.check_result(id, false, now).is_empty());
         std::fs::write(&path, "x").unwrap();
-        assert!(scheduler.poll(now + Duration::from_secs(2)).is_empty());
-        assert_eq!(scheduler.poll(now + Duration::from_secs(12)).len(), 1);
+        assert!(scheduler.poll(now + Duration::from_secs(2)).is_empty(), "no check before check_every");
+        let fired = scheduler.poll(now + Duration::from_secs(12));
+        assert_eq!(fired.len(), 1, "check requested again after check_every");
+        let id = match &fired[0] {
+            Fired::Check { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        assert_eq!(scheduler.check_result(id, true, now).len(), 1);
         let _ = std::fs::remove_file(&path);
     }
 }

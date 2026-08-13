@@ -731,7 +731,13 @@ async fn select_enter(
                 .next()
                 .and_then(|part| part.parse().ok())
                 .unwrap_or(0);
-            let cancelled = app.lock().await.scheduler.lock().unwrap().cancel(id);
+            let cancelled = app
+                .lock()
+                .await
+                .scheduler
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .cancel(id);
             if cancelled {
                 ui.push_system(&format!("cancelled task #{id}"));
             } else {

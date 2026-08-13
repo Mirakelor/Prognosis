@@ -101,7 +101,7 @@ pub fn tasks_selector(app: &App) -> Selector {
     let items = app
         .scheduler
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .tasks()
         .iter()
         .map(|task| format!("#{} {}", task.id, task.describe()))
@@ -291,7 +291,7 @@ pub fn status_lines(
             if ctx.context_limit >= 1_000_000 {
                 format!("{}M", ctx.context_limit / 1_000_000)
             } else {
-                format!("{}k", ctx.context_limit / 1000)
+                format!("{}k", ctx.context_limit.max(1000) / 1000)
             }
         ),
     });

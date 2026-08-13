@@ -682,7 +682,7 @@ fn schedule_task(scheduler: &Arc<Mutex<Scheduler>>, args: &serde_json::Value) ->
                 .get("timeout_seconds")
                 .and_then(serde_json::Value::as_u64)
                 .map(|s| Instant::now() + Duration::from_secs(s));
-            (TaskKind::Monitor { condition, check_every, deadline, last_check: None }, "monitor".into())
+            (TaskKind::Monitor { condition, check_every, deadline, last_check: None, checking: false }, "monitor".into())
         }
         other => return Err(format!("task: unknown type {other}")),
     };
@@ -732,6 +732,8 @@ pub struct App {
     pub remember: remember::Remember,
     models: Arc<SwitchableAdapter>,
     pub scheduler: Arc<Mutex<Scheduler>>,
+    monitor_tx: std::sync::mpsc::Sender<(u64, bool)>,
+    monitor_rx: std::sync::Mutex<std::sync::mpsc::Receiver<(u64, bool)>>,
     port: Arc<dyn LlmPort>,
     models_store: ModelsStore,
     model_store_dir: PathBuf,
@@ -897,6 +899,7 @@ impl App {
             && let Ok(client) = models::build_client(entry) {
                 models.switch(client);
             }
+        let (monitor_tx, monitor_rx) = std::sync::mpsc::channel();
         let mut app = Self {
             runtime,
             supervisor,
@@ -921,6 +924,8 @@ impl App {
             cancelled_tool_ids: std::collections::HashSet::new(),
             cycle: 0,
             startup_notice: None,
+            monitor_tx,
+            monitor_rx: std::sync::Mutex::new(monitor_rx),
         };
         register_default_tools(&mut app);
         let tool_defs: Vec<ToolDefinition> = app
@@ -1727,45 +1732,82 @@ impl App {
     }
 
     pub fn scheduler_tick(&mut self) {
+        loop {
+            let item = {
+                let rx = self.monitor_rx.lock().unwrap();
+                rx.try_recv()
+            };
+            let Ok((id, holds)) = item else {
+                break;
+            };
+            let fired = self
+                .scheduler
+                .lock()
+                .unwrap()
+                .check_result(id, holds, Instant::now());
+            for item in fired {
+                self.handle_fired(item);
+            }
+        }
         let fired = self.scheduler.lock().unwrap().poll(Instant::now());
         for item in fired {
             match item {
-                Fired::Execute { id, action, label } => {
-                    let meta = self.next_meta();
-                    self.refresh_context();
-                    let handler = self
-                        .tools
-                        .get(&action.tool)
-                        .map(|entry| entry.handler.clone());
-                    let name = action.tool.clone();
-                    let arguments = action.arguments.clone();
-                    let bus = self.runtime.bus();
+                Fired::Check { id, condition } => {
+                    let tx = self.monitor_tx.clone();
                     tokio::spawn(async move {
-                        let output = run_tool_handler(handler, name.clone(), arguments).await;
-                        bus.publish(Event::CycleStart { meta });
-                        bus.publish(Event::Perception {
-                            meta,
-                            payload: PerceptionPayload {
-                                source: PerceptionSource::Scheduled,
-                                content: format!("(Scheduled task #{id} — {label})\n{output}"),
-                                salience: 0.8,
-                            },
-                        });
+                        let holds = tokio::time::timeout(
+                            Duration::from_secs(15),
+                            tokio::task::spawn_blocking(move || condition.holds()),
+                        )
+                        .await
+                        .map(|result| result.unwrap_or(false))
+                        .unwrap_or(false);
+                        let _ = tx.send((id, holds));
                     });
                 }
-                Fired::MonitorTimeout { id } => {
-                    let meta = self.next_meta();
-                    self.runtime.publish(Event::CycleStart { meta });
-                    self.runtime.publish(Event::Perception {
+                other => self.handle_fired(other),
+            }
+        }
+    }
+
+    fn handle_fired(&mut self, item: Fired) {
+        match item {
+            Fired::Execute { id, action, label } => {
+                let meta = self.next_meta();
+                self.refresh_context();
+                let handler = self
+                    .tools
+                    .get(&action.tool)
+                    .map(|entry| entry.handler.clone());
+                let name = action.tool.clone();
+                let arguments = action.arguments.clone();
+                let bus = self.runtime.bus();
+                tokio::spawn(async move {
+                    let output = run_tool_handler(handler, name.clone(), arguments).await;
+                    bus.publish(Event::CycleStart { meta });
+                    bus.publish(Event::Perception {
                         meta,
                         payload: PerceptionPayload {
                             source: PerceptionSource::Scheduled,
-                            content: format!("(Monitor task #{id} timed out)"),
-                            salience: 0.6,
+                            content: format!("(Scheduled task #{id} — {label})\n{output}"),
+                            salience: 0.8,
                         },
                     });
-                }
+                });
             }
+            Fired::MonitorTimeout { id } => {
+                let meta = self.next_meta();
+                self.runtime.publish(Event::CycleStart { meta });
+                self.runtime.publish(Event::Perception {
+                    meta,
+                    payload: PerceptionPayload {
+                        source: PerceptionSource::Scheduled,
+                        content: format!("(Monitor task #{id} timed out)"),
+                        salience: 0.6,
+                    },
+                });
+            }
+            Fired::Check { .. } => unreachable!("checks are handled in scheduler_tick"),
         }
     }
 }
@@ -2089,6 +2131,7 @@ mod tests {
                 check_every: Duration::from_secs(1),
                 deadline: Some(Instant::now() - Duration::from_secs(1)),
                 last_check: None,
+                checking: false,
             },
             TaskAction {
                 tool: "ls".into(),

@@ -216,7 +216,7 @@ fn draw_messages(frame: &mut Frame, ui: &mut UiState, area: Rect) {
     let max_offset = total.saturating_sub(viewport) as usize;
     let back = ui.scroll_offset.min(max_offset);
     ui.scroll_offset = back;
-    let scroll = total.saturating_sub(viewport + back as u16);
+    let scroll = total.saturating_sub(viewport.saturating_add(back as u16));
     let paragraph = Paragraph::new(rows).scroll((scroll, 0));
     frame.render_widget(paragraph, area);
 }
@@ -278,7 +278,13 @@ fn render_rows(ui: &UiState, width: usize) -> Vec<Line<'static>> {
                 }
                 for markdown_line in markdown::parse(content) {
                     if markdown_line.code_block {
-                        for code_line in markdown_line.spans[0].text.split('\n') {
+                        for code_line in markdown_line
+                            .spans
+                            .first()
+                            .map(|span| span.text.as_str())
+                            .unwrap_or("")
+                            .split('\n')
+                        {
                             rows.push(Line::from(Span::styled(
                                 format!("    {code_line}"),
                                 Style::default().fg(theme::PURPLE),
@@ -293,7 +299,11 @@ fn render_rows(ui: &UiState, width: usize) -> Vec<Line<'static>> {
                         continue;
                     }
                     if markdown_line.heading {
-                        let text = markdown_line.spans[0].text.clone();
+                        let text = markdown_line
+                            .spans
+                            .first()
+                            .map(|span| span.text.clone())
+                            .unwrap_or_default();
                         let wrapped = wrap_text(&text, width.saturating_sub(4));
                         for (index, line) in wrapped.iter().enumerate() {
                             if index == 0 {
@@ -679,6 +689,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 }
 
 fn wrap_spans(spans: &[markdown::Span], width: usize) -> Vec<Vec<markdown::Span>> {
+    let width = width.max(1);
     let mut result = Vec::new();
     let mut current: Vec<markdown::Span> = Vec::new();
     let mut current_width = 0usize;
@@ -883,7 +894,10 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
     );
     let before: String = lines[cursor_line].chars().take(cursor_in_line).collect();
     let before_width = unicode_width::UnicodeWidthStr::width(before.as_str()) as u16;
-    let x = area.x + if cursor_line == 0 { 2 } else { 0 } + before_width;
+    let x = area
+        .x
+        .saturating_add(if cursor_line == 0 { 2 } else { 0 })
+        .saturating_add(before_width);
     let y = (area.y + cursor_line as u16).min(area.bottom().saturating_sub(1));
     frame.set_cursor_position((x.min(area.right().saturating_sub(1)), y));
 }
@@ -1250,7 +1264,7 @@ fn draw_bottom_bar(frame: &mut Frame, ui: &UiState, ctx: &RenderCtx, _git: &GitI
                 if ctx.context_limit >= 1_000_000 {
                     format!("{}M", ctx.context_limit / 1_000_000)
                 } else {
-                    format!("{}k", ctx.context_limit / 1000)
+                    format!("{}k", ctx.context_limit.max(1000) / 1000)
                 }
             ),
             theme::meta_style(),

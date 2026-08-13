@@ -273,6 +273,12 @@ impl PredictionActor {
 \n- If your call was rejected (denied, blocked, corrected), read the rejection reason and adjust: a denied call usually means the approach was wrong, a corrected call means the arguments were repaired for you — review the corrected result.\
 \n- If the user's request is impossible or unsafe, say so instead of attempting it.\
 \n- Do not loop: if the same call fails twice for the same reason, stop and change approach or ask the user, rather than retrying a third time.\
+\n\n# Continuation discipline\
+\n- Short confirmation or resume messages (\'continue\', \'继续\', \'go on\', \'ok\', \'yes\', \'确认\', \'可以\', \'好的\') are not new tasks and not permission to start over: they mean \'resume the work that was in progress\'. Treat them as a cue to pick up the exact thread you left, nothing more.\
+\n- Before answering such a message, identify the last committed step from the conversation — the most recent promise you made, the tool call that was interrupted or timed out, the fix you said you would apply — and make that step the start of this turn.\
+\n- Never redo work that already succeeded: do not re-check environments you already verified, do not re-submit jobs that are already running or already failed for a diagnosed reason, do not repeat diagnostics whose conclusions you already stated.\
+\n- Never skip a repair you promised: if you diagnosed a root cause and committed to a fix, the fix comes before any further run of the same pipeline; running the pipeline again on the unfixed issue will fail the same way and waste the user's time.\
+\n- When a tool call was interrupted or timed out, say so and re-issue it once in a more robust form (shorter timeout, smaller scope, explicit error capture) before changing the plan; do not silently move on as if it succeeded.\
 \n\n# Working style\
 \n- When continuing after tool results, start with a NEW brief sentence about what you learned or what you will do next. Never repeat text you already wrote in this conversation.\
 \n- If you are unsure what the user wants, ask one brief clarifying question rather than guessing.\
@@ -431,6 +437,18 @@ impl PredictionActor {
     }
 }
 
+fn is_weak_instruction(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.chars().count() > 6 {
+        return false;
+    }
+    matches!(
+        trimmed.to_lowercase().as_str(),
+        "continue" | "继续" | "go" | "go on" | "ok" | "okay" | "yes" | "y" | "确认"
+            | "可以" | "好的" | "好" | "嗯" | "是的" | "对" | "嗯嗯" | "接着" | "往下"
+    )
+}
+
 fn parse_intent(raw: &str) -> crate::runtime::types::IntentKind {
     match raw {
         "question" => crate::runtime::types::IntentKind::Question,
@@ -576,7 +594,9 @@ impl CognitiveActor for PredictionActor {
                 let generate = self.build_generate(&input);
                 self.last_messages = generate.messages.clone();
                 if focus.payload.source == crate::runtime::types::PerceptionSource::User {
-                    self.current_task = input.clone();
+                    if !is_weak_instruction(&input) {
+                        self.current_task = input.clone();
+                    }
                     self.tool_rounds.clear();
                     self.stray_results.clear();
                     self.executed_tools.clear();

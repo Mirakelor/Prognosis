@@ -65,7 +65,9 @@ pub fn handle_event(ui: &mut UiState, event: Event) -> Option<Event> {
             } else {
                 ToolStatus::Done
             };
-            let cleaned = crate::util::strip_ansi(&result.output);
+            let cleaned = crate::util::strip_ansi(&result.output)
+                .replace("\r\n", "\n")
+                .replace('\r', "\n");
             ui.mark_tool_finished(
                 &result.tool_call_id.clone().unwrap_or_default(),
                 &truncate(&cleaned, 300),
