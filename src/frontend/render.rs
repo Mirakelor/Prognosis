@@ -181,12 +181,13 @@ fn draw_top_bar(frame: &mut Frame, ctx: &RenderCtx, ui: &UiState, git: &GitInfo,
     });
 }
 
-fn input_area_height(ui: &UiState, _width: u16) -> u16 {
+fn input_area_height(ui: &UiState, width: u16) -> u16 {
     if ui.mode == Mode::Approve {
         return 0;
     }
     let normalized = ui.input.buffer.replace('\r', "\n");
-    normalized.split('\n').count().min(5) as u16 + 1
+    let rows = wrapped_input_rows(&normalized, width as usize);
+    rows.len().min(5) as u16 + 1
 }
 
 fn draw_messages(frame: &mut Frame, ui: &mut UiState, area: Rect) {
@@ -858,30 +859,95 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
     let cursor_line = normalized[..cursor_byte].matches('\n').count();
     let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+    let rows = wrapped_input_rows(&normalized, area.width as usize);
     let mut rendered = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
+    for (index, row) in rows.iter().enumerate() {
         if index == 0 {
             let mut spans = vec![Span::styled("❯ ", theme::PINK)];
-            if !line.is_empty() {
-                spans.push(Span::styled(line.to_string(), theme::text_style()));
+            if !row.is_empty() {
+                spans.push(Span::styled(row.clone(), theme::text_style()));
             }
             rendered.push(Line::from(spans));
         } else {
             rendered.push(Line::from(vec![Span::styled(
-                line.to_string(),
+                row.clone(),
                 theme::text_style(),
             )]));
         }
     }
     frame.render_widget(Paragraph::new(rendered), area);
     let before: String = lines[cursor_line].chars().take(cursor_in_line).collect();
-    let before_width = unicode_width::UnicodeWidthStr::width(before.as_str()) as u16;
+    let mut row_index = 0usize;
+    for (idx, line) in lines[..cursor_line].iter().enumerate() {
+        row_index += wrapped_line_count(line, area.width as usize, idx == 0);
+    }
+    let inner_width = if cursor_line == 0 {
+        (area.width as usize).saturating_sub(2).max(4)
+    } else {
+        (area.width as usize).max(4)
+    };
+    let mut row_within = 0usize;
+    let mut current = 0usize;
+    for c in before.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if current + w > inner_width {
+            row_within += 1;
+            current = 0;
+        }
+        current += w;
+    }
+    row_index += row_within;
+    let x_offset = unicode_width::UnicodeWidthStr::width(before.as_str())
+        .saturating_sub(row_within * inner_width);
     let x = area
         .x
-        .saturating_add(if cursor_line == 0 { 2 } else { 0 })
-        .saturating_add(before_width);
-    let y = (area.y + cursor_line as u16).min(area.bottom().saturating_sub(1));
+        .saturating_add(if row_index == 0 { 2 } else { 0 })
+        .saturating_add(x_offset as u16);
+    let y = (area.y + row_index as u16).min(area.bottom().saturating_sub(1));
     frame.set_cursor_position((x.min(area.right().saturating_sub(1)), y));
+}
+
+fn wrapped_input_rows(buffer: &str, width: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    for (idx, line) in buffer.split('\n').enumerate() {
+        let inner_width = if idx == 0 {
+            width.saturating_sub(2).max(4)
+        } else {
+            width.max(4)
+        };
+        let mut current = String::new();
+        let mut current_w = 0usize;
+        for c in line.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            if current_w + w > inner_width && !current.is_empty() {
+                rows.push(std::mem::take(&mut current));
+                current_w = 0;
+            }
+            current.push(c);
+            current_w += w;
+        }
+        rows.push(current);
+    }
+    rows
+}
+
+fn wrapped_line_count(line: &str, width: usize, first: bool) -> usize {
+    let inner_width = if first {
+        width.saturating_sub(2).max(4)
+    } else {
+        width.max(4)
+    };
+    let mut lines = 1usize;
+    let mut current = 0usize;
+    for c in line.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if current + w > inner_width {
+            lines += 1;
+            current = 0;
+        }
+        current += w;
+    }
+    lines
 }
 
 fn draw_approve(frame: &mut Frame, ui: &UiState, area: Rect) {
@@ -1317,6 +1383,29 @@ mod tests {
         let mut ui = UiState::new();
         ui.input.buffer = "first\rsecond".to_string();
         assert_eq!(input_area_height(&ui, 120), 3, "\\r must count as a line break");
+    }
+
+    #[test]
+    fn wrapped_rows_wrap_long_lines_at_width() {
+        let rows = wrapped_input_rows("abcdefgh", 6);
+        assert_eq!(rows, vec!["abcd", "efgh"], "long line must wrap at width");
+        let first = wrapped_input_rows("abcdefgh", 6);
+        assert_eq!(first.len(), 2);
+        let multi = wrapped_input_rows("ab\ncdefghi", 6);
+        assert_eq!(multi, vec!["ab", "cdefgh", "i"], "later lines keep full width");
+        assert_eq!(wrapped_input_rows("", 80), vec![""], "empty buffer keeps one row");
+    }
+
+    #[test]
+    fn wrapped_line_count_matches_row_count() {
+        assert_eq!(wrapped_line_count("abcdefgh", 6, true), 2);
+        assert_eq!(wrapped_line_count("ab", 6, true), 1);
+        assert_eq!(wrapped_line_count("abcdefgh", 6, false), 2);
+        assert_eq!(
+            wrapped_input_rows("abcdefgh", 6).len(),
+            wrapped_line_count("abcdefgh", 6, true),
+            "count must agree with row generation"
+        );
     }
 
     #[test]
