@@ -181,27 +181,12 @@ fn draw_top_bar(frame: &mut Frame, ctx: &RenderCtx, ui: &UiState, git: &GitInfo,
     });
 }
 
-fn input_area_height(ui: &UiState, width: u16) -> u16 {
+fn input_area_height(ui: &UiState, _width: u16) -> u16 {
     if ui.mode == Mode::Approve {
         return 0;
     }
-    let inner_width = width.saturating_sub(2).max(4) as usize;
-    let mut lines = 1usize;
-    let mut current = 0usize;
-    for c in ui.input.buffer.chars() {
-        if c == '\n' || c == '\r' {
-            lines += 1;
-            current = 0;
-            continue;
-        }
-        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        if current + w > inner_width {
-            lines += 1;
-            current = 0;
-        }
-        current += w;
-    }
-    lines.min(5) as u16 + 1
+    let normalized = ui.input.buffer.replace('\r', "\n");
+    normalized.split('\n').count().min(5) as u16 + 1
 }
 
 fn draw_messages(frame: &mut Frame, ui: &mut UiState, area: Rect) {
@@ -881,17 +866,14 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
                 spans.push(Span::styled(line.to_string(), theme::text_style()));
             }
             rendered.push(Line::from(spans));
-        } else if !line.is_empty() {
+        } else {
             rendered.push(Line::from(vec![Span::styled(
                 line.to_string(),
                 theme::text_style(),
             )]));
         }
     }
-    frame.render_widget(
-        Paragraph::new(rendered).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(rendered), area);
     let before: String = lines[cursor_line].chars().take(cursor_in_line).collect();
     let before_width = unicode_width::UnicodeWidthStr::width(before.as_str()) as u16;
     let x = area
