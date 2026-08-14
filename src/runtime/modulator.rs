@@ -95,7 +95,7 @@ impl ModulatorActor {
         match self.mode {
             CognitiveMode::Controlled => {
                 modulation.temperature = Temperature::new(
-                    0.7_f32.max(0.7 - TEMPERATURE_STEP * self.state.norepinephrine),
+                    (0.7 - TEMPERATURE_STEP * self.state.norepinephrine).max(0.2),
                 )
                 .ok();
                 modulation
@@ -265,7 +265,6 @@ mod tests {
         let (_h, ready) = spawn_actor(bus.clone(), ModulatorActor::new());
         ready.await.unwrap();
         let mut rx = Box::pin(bus.subscribe_kinds(&[EventKind::Modulation]));
-
         bus.publish(rpe_event(-0.9));
         for _ in 0..4 {
             bus.publish(error_event(0.2, 0.9));
@@ -289,6 +288,36 @@ mod tests {
         assert!(
             !modulation.injected_messages.is_empty() || modulation.reasoning_effort.is_some()
         );
+    }
+
+    #[test]
+    fn controlled_mode_temperature_drops_with_ne() {
+        let mut actor = ModulatorActor::new();
+        actor.mode = CognitiveMode::Controlled;
+        actor.state.norepinephrine = 0.8;
+        let temp = actor
+            .build_modulation()
+            .temperature
+            .map(|t| t.get())
+            .unwrap_or(0.7);
+        assert!(temp < 0.7, "controlled mode must lower temperature, got {temp}");
+        assert!((temp - 0.62).abs() < 1e-3, "0.7 - 0.1*0.8 = 0.62, got {temp}");
+
+        actor.state.norepinephrine = 1.0;
+        let temp = actor
+            .build_modulation()
+            .temperature
+            .map(|t| t.get())
+            .unwrap_or(0.7);
+        assert!((temp - 0.6).abs() < 1e-3, "expected 0.6, got {temp}");
+
+        actor.state.norepinephrine = 6.0;
+        let temp = actor
+            .build_modulation()
+            .temperature
+            .map(|t| t.get())
+            .unwrap_or(0.7);
+        assert_eq!(temp, 0.2, "temperature must clamp at the 0.2 floor");
     }
 
     #[tokio::test]
