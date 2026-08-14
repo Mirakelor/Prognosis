@@ -1711,7 +1711,11 @@ impl App {
                 crate::adapter::types::Message::system(system),
                 crate::adapter::types::Message::user(user),
             ],
-            modulation: ModulationContext::default(),
+            modulation: ModulationContext {
+                reasoning_effort: Some(crate::adapter::types::ReasoningEffort::None),
+                temperature: crate::adapter::types::Temperature::new(0.0).ok(),
+                ..Default::default()
+            },
             tools: None,
         };
         let cancel = tokio_util::sync::CancellationToken::new();

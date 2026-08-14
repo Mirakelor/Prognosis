@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::adapter::types::Message;
+use crate::adapter::types::{Message, ReasoningEffort, Temperature};
 use crate::runtime::ports::LlmPort;
 use crate::runtime::types::{GenerateRequest, ModulationContext};
 
@@ -68,7 +68,11 @@ impl Supervisor {
     async fn call(&self, messages: Vec<Message>) -> Result<String, String> {
         let request = GenerateRequest {
             messages,
-            modulation: ModulationContext::default(),
+            modulation: ModulationContext {
+                reasoning_effort: Some(ReasoningEffort::None),
+                temperature: Temperature::new(0.0).ok(),
+                ..Default::default()
+            },
             tools: None,
         };
         let cancel = CancellationToken::new();
@@ -221,6 +225,7 @@ mod tests {
     struct RecordingPort {
         outputs: Vec<String>,
         seen: std::sync::Mutex<Vec<String>>,
+        modulations: std::sync::Mutex<Vec<ModulationContext>>,
     }
 
     #[async_trait]
@@ -269,6 +274,7 @@ mod tests {
                     self.seen.lock().unwrap().push(message.content.to_plain_text());
                 }
             }
+            self.modulations.lock().unwrap().push(request.modulation.clone());
             let output = self.outputs[0].clone();
             let chunk = CompletionChunk {
                 model: "judge".into(),
@@ -387,6 +393,7 @@ mod tests {
         let port = Arc::new(RecordingPort {
             outputs: vec![r#"{"pass":true,"reason":"ok"}"#.into()],
             seen: std::sync::Mutex::new(Vec::new()),
+            modulations: std::sync::Mutex::new(Vec::new()),
         });
         let supervisor = Supervisor::new(port.clone());
         supervisor.set_enabled(true);
@@ -405,6 +412,43 @@ mod tests {
         assert!(seen[0].contains("Tools used so far"));
         assert!(seen[0].contains("1. read_file(src/main.rs) -> fn main() {}"));
         assert!(seen[0].contains("Pending tool call: edit_file(src/main.rs)"));
+    }
+
+    #[tokio::test]
+    async fn judge_and_correct_calls_disable_thinking() {
+        let port = Arc::new(RecordingPort {
+            outputs: vec![r#"{"pass":false,"reason":"wrong tool","action":"correct"}"#.into()],
+            seen: std::sync::Mutex::new(Vec::new()),
+            modulations: std::sync::Mutex::new(Vec::new()),
+        });
+        let supervisor = Supervisor::new(port.clone());
+        supervisor.set_enabled(true);
+        let pending = ToolCallRecord {
+            name: "run_terminal_command".into(),
+            arguments: "echo hi".into(),
+            output: String::new(),
+        };
+        let _ = supervisor
+            .judge(
+                "task",
+                &[],
+                &pending,
+                &["ls".to_string(), "run_terminal_command".to_string()],
+            )
+            .await;
+        let mods = port.modulations.lock().unwrap();
+        assert!(!mods.is_empty(), "judge must issue a light call");
+        for modulation in mods.iter() {
+            assert_eq!(
+                modulation.reasoning_effort,
+                Some(ReasoningEffort::None),
+                "light calls must disable thinking"
+            );
+            assert!(
+                modulation.temperature.is_some(),
+                "light calls should be deterministic"
+            );
+        }
     }
 
     #[test]

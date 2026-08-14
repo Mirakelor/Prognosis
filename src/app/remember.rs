@@ -5,7 +5,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::adapter::types::Message;
+use crate::adapter::types::{Message, ReasoningEffort, Temperature};
 use crate::runtime::ports::LlmPort;
 use crate::runtime::types::{GenerateRequest, ModulationContext};
 
@@ -220,7 +220,11 @@ impl Remember {
                 ),
                 Message::user(transcript),
             ],
-            modulation: ModulationContext::default(),
+            modulation: ModulationContext {
+                reasoning_effort: Some(ReasoningEffort::None),
+                temperature: Temperature::new(0.0).ok(),
+                ..Default::default()
+            },
             tools: None,
         };
         let cancel = CancellationToken::new();
