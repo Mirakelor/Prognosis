@@ -212,7 +212,7 @@ impl Remember {
 \n\n# Output\
 \nReply with JSON only, no other text:\
 \n{\"summary\": \"<concise summary>\", \"highlights\": [\"<key fact>\"]}\
-\n\nRules:\
+\n\n# Rules\
 \n- summary: the whole session in a few sentences — what happened, what was decided, what was built, and where the work stands.\
 \n- highlights: concrete facts, decisions, preferences, and open threads worth recalling later; 2-5 items, each specific enough to act on (\"user prefers Chinese replies\" over \"user preferences\").\
 \n- Do not invent details not present in the transcript.\

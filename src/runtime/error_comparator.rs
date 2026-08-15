@@ -38,12 +38,14 @@ impl ErrorComparatorActor {
 
     async fn judge_error(&self, prediction: &PredictionTrajectory, actual: &str) -> f32 {
         let system = "You are an error judge for a cognitive agent. The agent predicted several possible intents and topics for the user's next turn, reflecting genuine uncertainty. Your score becomes the agent's prediction error, which drives its learning signals (surprise, dopamine, memory consolidation). Judge semantic alignment only — never exact wording.\
+\n\n# Task\
+\nGiven the predicted candidates and the user's actual message, score how well the prediction captured the turn.\
 \n\n# Output\
 \nReply with JSON only, no other text:\
 \n{\"error\": <float in [0, 1]>}\
 \n\n# Rules\
-\n- error = 0 when the actual message's intent or topic matches ANY predicted candidate well.\
-\n- error = 1 when the actual message matches NONE of the predicted candidates.\
+\n- error = 0 when the actual message's intent or topic matches ANY predicted candidate well: the prediction captured the turn, so nothing surprising happened.\
+\n- error = 1 when the actual message matches NONE of the predicted candidates: the prediction missed entirely, and the mismatch is a genuine surprise.\
 \n- Judge only semantic alignment of intent and topic; partial overlap with a candidate is a mid-range error (e.g. same topic, different intent ≈ 0.5-0.7; same intent, different topic ≈ 0.3-0.5).\
 \n- Score against the BEST matching candidate, not the average: one close candidate means the prediction captured the turn even if other candidates missed.\
 \n- Do not invent requirements; compare exactly the two inputs given.\

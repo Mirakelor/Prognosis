@@ -856,7 +856,7 @@ pub fn read_skill(project_dir: &Path, skill_name: &str) -> Result<String, String
                             return Ok(content);
                         }
                         return Ok(format!(
-                            "{content}\n\n## Supporting files\nSkill directory:\n{}\n\nUse the read file tool to access these files as needed.",
+                            "{content}\n\n## Supporting Files\nSkill directory:\n{}\n\nUse the read file tool to access these files as needed.",
                             supporting.join("\n")
                         ));
                     }

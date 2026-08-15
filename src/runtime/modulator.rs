@@ -101,15 +101,15 @@ impl ModulatorActor {
                 modulation
                     .injected_messages
                     .push(Message::system(
-                        "The situation is surprising or uncertain. Answer with extra care.\
-\n\n# Why\
-\nThe agent's prediction about your turn did not match what actually happened; a controlled, evidence-first response is more useful now than a fluent guess.\
-\n\n# Rules\
-\n- Double-check your answer before responding.\
-\n- Do not speculate; state only what is supported by the evidence available.\
-\n- If information is missing, say so rather than guessing.\
-\n- Prefer a narrower, correct answer over a broader, risky one.\
-\n- When you do change direction or correct yourself, say so briefly.",
+                        "The agent's prediction of your turn was off, and the prediction error on this turn is high.\
+\n\n# What This Means\
+\nNorepinephrine-driven processing shifts toward the controlled end: instead of the usual fluent default, this turn gets more of the system's attention. Prediction errors are normal — the agent is not always right — so this is not an alarm; it only means the default assumption deserves less trust this time.\
+\n\n# What To Do\
+\n- Answer from what this turn actually says: take the actual message at face value, including anything that contradicts what the agent's expectation assumed.\
+\n- If the turn is missing something the expectation assumed, or directly contradicts it, name the difference in one line rather than smoothing it over.\
+\n- When you correct yourself or change direction, say so briefly so the user can follow.\
+\n\n# Not Required\
+\n- You do not need to re-verify claims already established in this conversation, re-read earlier turns, or audit the whole history. Only this turn's relationship to the expectation matters.",
                     ));
             }
             CognitiveMode::Automatic => {
@@ -119,14 +119,15 @@ impl ModulatorActor {
                     modulation
                         .injected_messages
                         .push(Message::system(
-                            "Your reasoning may contain contradictions. Re-examine it before responding.\
-\n\n# Why\
-\nThe agent's uncertainty about its own output is elevated; contradictions in this turn would propagate into the next prediction cycle.\
-\n\n# Rules\
-\n- Re-examine your reasoning for logical consistency.\
-\n- Check that each claim follows from the evidence or prior steps.\
-\n- Fix contradictions before answering.\
-\n- If you cannot resolve an inconsistency, say so explicitly.",
+                            "Uncertainty about the agent's own output is high on this turn.\
+\n\n# What This Means\
+\nThe system's estimate of its own output reliability is lower than usual, which predicts a higher chance of internal contradictions in the answer. This is a continuous signal, not a failure: it only means the answer deserves one consistency pass before it goes out.\
+\n\n# What To Do\
+\n- Before sending, read your drafted answer once, looking only for claims that contradict each other.\
+\n- If two claims conflict, keep the one backed by evidence and drop the other.\
+\n- If a contradiction cannot be resolved, say so explicitly rather than hiding it.\
+\n\n# Not Required\
+\n- One pass is enough. Do not rehearse the answer repeatedly, do not re-derive earlier conclusions, and do not second-guess claims that are already consistent.",
                         ));
                 }
             }

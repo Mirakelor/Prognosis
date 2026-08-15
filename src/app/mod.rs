@@ -39,63 +39,51 @@ const NO_PARALLEL_TOOL_CALLING_INSTRUCTION: &str =
     "This tool CANNOT be called in parallel with any other tools, including itself";
 
 const CHANGES_DESCRIPTION: &str =
-    "Any modifications to the file, showing only needed changes. Do NOT wrap this in a codeblock or write anything besides the code changes. In larger files, use brief language-appropriate placeholders for large unmodified sections, e.g. '// ... existing code ...'";
+    "Any modifications to the file, showing only the needed changes. Do NOT wrap this in a codeblock or write anything besides the code changes. In larger files, use brief language-appropriate placeholders for large unmodified sections, e.g. '// ... existing code ...'. Preserve everything you are not changing byte-for-byte, including whitespace and comments.";
 
-const EDIT_CODE_INSTRUCTIONS: &str = r#"  When addressing code modification requests, present a concise code snippet that
-  emphasizes only the necessary changes and uses abbreviated placeholders for
-  unmodified sections. For example:
+const EDIT_CODE_INSTRUCTIONS: &str = r#"When addressing code modification requests, present a concise code snippet that emphasizes only the necessary changes and uses abbreviated placeholders for unmodified sections. For example:
 
-  ```language /path/to/file
+```language /path/to/file
+{{ modified code here }}
+{{ another modification }}
+```
 
+In existing files, always restate the function or class that the snippet belongs to:
+
+```language /path/to/file
+function exampleFunction() {
   {{ modified code here }}
+}
+```
 
-
-  {{ another modification }}
-
-  ```
-
-  In existing files, you should always restate the function or class that the snippet belongs to:
-
-  ```language /path/to/file
-
-  function exampleFunction() {
-
-    {{ modified code here }}
-
-  }
-
-  ```
-
-  Since users have access to their complete file, they prefer reading only the
-  relevant modifications. It's perfectly acceptable to omit unmodified portions
-  at the beginning, middle, or end of files using these "lazy" comments. Only
-  provide the complete file when explicitly requested. Include a concise explanation
-  of changes unless the user specifically asks for code only."#;
+Users have access to their complete file, so they prefer reading only the relevant modifications. It is acceptable to omit unmodified portions at the beginning, middle, or end of files using these placeholders; only provide the complete file when explicitly requested. Include a concise explanation of changes unless the user specifically asks for code only."#;
 
 const SINGLE_FIND_AND_REPLACE_DESCRIPTION: &str = r#"Performs exact string replacements in a file.
 
-IMPORTANT:
-- ALWAYS use the `read_file` tool just before making edits, to understand the file's up-to-date contents and context. The user can also edit the file while you are working with it.
-- This tool CANNOT be called in parallel with any other tools, including itself
-- When editing text from `read_file` tool output, ensure you preserve exact whitespace/indentation.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable, for instance.
+# Requirements
+- ALWAYS use the read_file tool just before making edits, to understand the file's up-to-date contents and context. The user can also edit the file while you are working with it.
+- This tool CANNOT be called in parallel with any other tools, including itself.
+- When editing text from read_file tool output, preserve exact whitespace/indentation.
+- Only use emojis if the user explicitly requests it.
+- Use replace_all for replacing and renaming strings across the file (e.g. renaming a variable).
 
-WARNINGS:
-- When not using `replace_all`, the edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
-- The edit will likely fail if you have not recently used the `read_file` tool to view up-to-date file contents.
+# Failure Modes
+- When not using replace_all, the edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique, or use replace_all to change every instance of old_string.
+- The edit will likely fail if you have not recently used the read_file tool to view up-to-date file contents.
 
-Limits: this tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead."#;
+# Limits
+This tool only works inside the project directory — paths outside it are rejected. If the target lives outside the project (e.g. ~/Desktop), use run_terminal_command to reach it instead."#;
 
-const CREATE_RULE_BLOCK_DESCRIPTION: &str = r#"Creates a "rule" that can be referenced in future conversations. This should be used whenever you want to establish code standards / preferences that should be applied consistently, or when you want to avoid making a mistake again. To modify existing rules, use the edit tool instead.
+const CREATE_RULE_BLOCK_DESCRIPTION: &str = r#"Creates a "rule" that can be referenced in future conversations. Use this whenever you want to establish code standards or preferences that should be applied consistently, or when you want to avoid repeating a mistake. To modify existing rules, use the edit tool instead.
 
-Rule Types:
-- Always: Include only "rule" (always included in model context)
-- Auto Attached: Include "rule", "globs", and/or "regex" (included when files match patterns)
-- Agent Requested: Include "rule" and "description" (AI decides when to apply based on description)
-- Manual: Include only "rule" (only included when explicitly mentioned using @ruleName)
+# Rule Types
+- Always: include only "rule" — always included in model context
+- Auto Attached: include "rule", "globs", and/or "regex" — included when files match patterns
+- Agent Requested: include "rule" and "description" — the agent decides when to apply based on the description
+- Manual: include only "rule" — included only when explicitly mentioned using @ruleName
 
-Scope: set "scope" to "global" to store the rule in ~/.prognosis/rules so it applies to all projects; omit it to store in the current project's .prognosis/rules."#;
+# Scope
+Set "scope" to "global" to store the rule in ~/.prognosis/rules so it applies to all projects; omit it to store in the current project's .prognosis/rules."#;
 
 const NAME_ARG_DESC: &str = "Short, descriptive name summarizing the rule's purpose (e.g. 'React Standards', 'Type Hints')";
 const RULE_ARG_DESC: &str = "Clear, imperative instruction for future code generation (e.g. 'Use named exports', 'Add Python type hints'). Each rule should focus on one specific standard.";
@@ -175,7 +163,7 @@ fn tool_spec(name: &str, project_dir: &Path) -> (Option<String>, serde_json::Val
             serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The command to run. This will be passed directly into the IDE shell."},
+                    "command": {"type": "string", "description": "The command to run. It is executed in the user's local shell (sh -c) from the project directory."},
                     "waitForCompletion": {"type": "boolean", "description": "Whether to wait for the command to complete before returning. Default is true. Set to false to run the command in the background. Set to true to run the command in the foreground and wait to collect the output."},
                 },
                 "required": ["command"],
