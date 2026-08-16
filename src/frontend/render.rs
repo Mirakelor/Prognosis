@@ -382,7 +382,17 @@ fn render_rows(ui: &UiState, width: usize) -> Vec<Line<'static>> {
                     } else {
                         raw_lines
                     };
-                    let mut shown: Vec<&str> = lines.clone();
+                    let content_width = width.saturating_sub(4).max(1);
+                    let mut wrapped: Vec<String> = Vec::new();
+                    for line in lines {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        for piece in wrap_text(line, content_width) {
+                            wrapped.push(piece);
+                        }
+                    }
+                    let mut shown: Vec<&str> = wrapped.iter().map(String::as_str).collect();
                     let mut folded = false;
                     if !ui.fold_expanded && shown.len() > TOOL_FOLD_LINES {
                         shown = shown[..TOOL_FOLD_LINES].to_vec();
@@ -392,24 +402,21 @@ fn render_rows(ui: &UiState, width: usize) -> Vec<Line<'static>> {
                         shown.truncate(TOOL_MAX_LINES);
                     }
                     for line in shown {
-                        if line.trim().is_empty() {
-                            continue;
-                        }
                         rows.push(Line::from(Span::styled(
                             format!("  │ {line}"),
                             theme::meta_style(),
                         )));
                     }
                     if folded {
-                        let remaining = lines.len().saturating_sub(TOOL_FOLD_LINES);
+                        let remaining = wrapped.len().saturating_sub(TOOL_FOLD_LINES);
                         rows.push(Line::from(Span::styled(
                             format!("  ▸ … {remaining} more lines · Tab to expand"),
                             theme::meta_style().italic(),
                         )));
-                    } else if lines.len() > TOOL_MAX_LINES {
+                    } else if wrapped.len() > TOOL_MAX_LINES {
                         rows.push(Line::from(Span::styled(
                             format!("  ▸ … {} more lines (truncated)",
-                                lines.len().saturating_sub(TOOL_MAX_LINES)),
+                                wrapped.len().saturating_sub(TOOL_MAX_LINES)),
                             theme::meta_style().italic(),
                         )));
                     }
@@ -1500,6 +1507,44 @@ mod tests {
     fn diff_line_without_number_keeps_column() {
         let lines = vec![DiffLine { kind: '+', line_no: None, text: "x".into() }];
         assert_eq!(row_text(&render_diff_line(&lines[0], &lines)), "  +      x");
+    }
+
+    #[test]
+    fn long_single_line_output_folds_after_wrap() {
+        let mut ui = UiState::new();
+        let reason = "blocked by supervisor: Order: the user asked to read the file first, but the pending edit targets content the assistant has not actually inspected, so it is acting on unverified state; re-read the region and retry with an edit that matches what you saw.";
+        ui.messages.push(UiMessage::ToolCall(ToolCallMsg {
+            tool_call_id: "1".into(),
+            name: "edit_existing_file".into(),
+            arguments: r#"{"filepath": "a.rs"}"#.into(),
+            status: ToolStatus::Errored,
+            summary: String::new(),
+            output: format!("({reason})"),
+            diff: vec![],
+            elapsed: Some(0.1),
+            started: std::time::Instant::now(),
+            verdict: Some("blocked".into()),
+        }));
+        let rows = render_rows(&ui, 40);
+        let text: String = rows
+            .iter()
+            .map(|row| {
+                row.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("more lines · Tab to expand"),
+            "a single long line must wrap and fold at narrow width: {text}"
+        );
+        let shown_rows: Vec<&str> = text.lines().filter(|l| l.contains("│ ")).collect();
+        assert!(
+            shown_rows.len() <= 7,
+            "folded output must show at most 7 wrapped rows: {text}"
+        );
     }
 
     #[test]
