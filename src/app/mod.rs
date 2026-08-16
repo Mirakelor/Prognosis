@@ -39,7 +39,7 @@ const NO_PARALLEL_TOOL_CALLING_INSTRUCTION: &str =
     "This tool CANNOT be called in parallel with any other tools, including itself";
 
 const CHANGES_DESCRIPTION: &str =
-    "Any modifications to the file, showing only the needed changes. Do NOT wrap this in a codeblock or write anything besides the code changes. In larger files, use brief language-appropriate placeholders for large unmodified sections, e.g. '// ... existing code ...'. Preserve everything you are not changing byte-for-byte, including whitespace and comments.";
+    "Any modifications to the file, showing only the needed changes. Do NOT wrap this in a codeblock or write anything besides the code changes. The first and last lines of the changes must match the file exactly, including indentation, so the edit can be located; changed lines should differ from the file only in what you are actually modifying. In larger files, use brief language-appropriate placeholders for large unmodified sections, e.g. '// ... existing code ...'. Preserve everything you are not changing byte-for-byte, including whitespace and comments.";
 
 const EDIT_CODE_INSTRUCTIONS: &str = r#"When addressing code modification requests, present a concise code snippet that emphasizes only the necessary changes and uses abbreviated placeholders for unmodified sections. For example:
 
@@ -55,6 +55,8 @@ function exampleFunction() {
   {{ modified code here }}
 }
 ```
+
+The first and last lines of the snippet must match the file exactly, including indentation — they are the anchors the tool uses to locate the edit. Changed lines should keep the surrounding indentation and differ from the file only in what you are actually modifying; new lines are inserted between anchors.
 
 Users have access to their complete file, so they prefer reading only the relevant modifications. It is acceptable to omit unmodified portions at the beginning, middle, or end of files using these placeholders; only provide the complete file when explicitly requested. Include a concise explanation of changes unless the user specifically asks for code only."#;
 

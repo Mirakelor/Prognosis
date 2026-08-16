@@ -1028,6 +1028,26 @@ pub fn edit_existing_file(
                 .to_string(),
         );
     }
+    let first_anchor = change_lines
+        .iter()
+        .position(|line| !is_placeholder(line) && !line.trim().is_empty());
+    let last_anchor = change_lines
+        .iter()
+        .rposition(|line| !is_placeholder(line) && !line.trim().is_empty());
+    if let (Some(first), Some(last)) = (first_anchor, last_anchor) {
+        if positions[first].is_none() {
+            return Err(
+                "Could not apply the changes: the first line of the changes does not match the file contents. Read the file again and provide changes that match its current contents."
+                    .to_string(),
+            );
+        }
+        if positions[last].is_none() {
+            return Err(
+                "Could not apply the changes: the last line of the changes does not match the file contents. Read the file again and provide changes that match its current contents."
+                    .to_string(),
+            );
+        }
+    }
     let mut replacements: Vec<Option<usize>> = vec![None; change_lines.len()];
     for (idx, line) in change_lines.iter().enumerate() {
         if positions[idx].is_some() || is_placeholder(line) {
@@ -1055,7 +1075,7 @@ pub fn edit_existing_file(
             }
         }
         if let Some((j, sim)) = best
-            && sim >= 0.4 {
+            && sim >= 0.9 {
                 replacements[idx] = Some(j);
             }
     }
@@ -1073,12 +1093,21 @@ pub fn edit_existing_file(
             new_lines.extend(file_lines[last_consumed..rep].iter().map(|l| (*l).to_string()));
             new_lines.push((*line).to_string());
             last_consumed = rep + 1;
+        } else if let Some(target) = unique_interval_target(&positions, idx) {
+            new_lines.extend(file_lines[last_consumed..target].iter().map(|l| (*l).to_string()));
+            new_lines.push((*line).to_string());
+            last_consumed = target + 1;
         } else {
             let next = positions[idx + 1..]
                 .iter()
                 .chain(replacements[idx + 1..].iter())
-                .find_map(|p| *p)
-                .unwrap_or(last_consumed);
+                .find_map(|p| *p);
+            let Some(next) = next else {
+                return Err(format!(
+                    "Could not apply the changes: line {} of the changes does not match the file contents and has no following anchor line. Read the file again and provide changes that match its current contents.",
+                    idx + 1
+                ));
+            };
             new_lines.extend(file_lines[last_consumed..next].iter().map(|l| (*l).to_string()));
             new_lines.push((*line).to_string());
             last_consumed = next;
@@ -1100,6 +1129,16 @@ pub fn edit_existing_file(
         "Edited {filepath}\n{}",
         unified_diff(&content, &joined)
     ))
+}
+
+fn unique_interval_target(positions: &[Option<usize>], idx: usize) -> Option<usize> {
+    let prev = positions[..idx].iter().rev().find_map(|p| *p)?;
+    let next = positions[idx + 1..].iter().find_map(|p| *p)?;
+    if next == prev + 2 {
+        Some(prev + 1)
+    } else {
+        None
+    }
 }
 
 fn strip_codeblock(changes: &str) -> &str {
@@ -1673,6 +1712,57 @@ mod tests {
         assert!(content.contains("let z = 3"), "{content}");
         let broken = edit_existing_file(dir.path(), "a.rs", "completely different code").unwrap_err();
         assert!(broken.contains("none of the provided code"), "{broken}");
+    }
+
+    #[test]
+    fn edit_existing_file_rejects_mismatched_anchor_lines() {
+        let dir = tmp_project();
+        let file = dir.path().join("c.rs");
+        std::fs::write(&file, "fn a() {\n    old();\n}\n").unwrap();
+        let bad_first = edit_existing_file(dir.path(), "c.rs", "fn missing() {\n    new();\n}\n").unwrap_err();
+        assert!(bad_first.contains("first line"), "{bad_first}");
+        let bad_last = edit_existing_file(dir.path(), "c.rs", "fn a() {\n    new();\n}\n}\n").unwrap_err();
+        assert!(bad_last.contains("last line"), "{bad_last}");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "fn a() {\n    old();\n}\n",
+            "rejected edits must not modify the file"
+        );
+    }
+
+    #[test]
+    fn edit_existing_file_inserts_between_anchors_only() {
+        let dir = tmp_project();
+        let file = dir.path().join("e.rs");
+        std::fs::write(&file, "fn a() {\n    keep();\n}\n").unwrap();
+        edit_existing_file(
+            dir.path(),
+            "e.rs",
+            "fn a() {\n    keep();\n    extra();\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "fn a() {\n    keep();\n    extra();\n}\n"
+        );
+    }
+
+    #[test]
+    fn edit_existing_file_does_not_blur_replacement_into_wrong_row() {
+        let dir = tmp_project();
+        let file = dir.path().join("f.rs");
+        std::fs::write(&file, "fn a() {\n    x1();\n    x2();\n}\n").unwrap();
+        edit_existing_file(
+            dir.path(),
+            "f.rs",
+            "fn a() {\n    x1();\n    brand();\n    x2();\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "fn a() {\n    x1();\n    brand();\n    x2();\n}\n",
+            "a dissimilar line between two anchors must insert, not replace"
+        );
     }
 
     #[test]
