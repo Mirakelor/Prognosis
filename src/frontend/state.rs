@@ -197,9 +197,13 @@ impl UiState {
         crate::frontend::theme::SPINNER[self.spinner_index % crate::frontend::theme::SPINNER.len()]
     }
 
-    pub fn note_tool_started(&mut self, arguments: &str) {
+    pub fn note_tool_started(&mut self, name: &str, arguments: &str) {
         self.turn_tool_calls += 1;
-        if let Some(path) = extract_filepath(arguments) {
+        if matches!(
+            name,
+            "edit_existing_file" | "single_find_and_replace" | "create_new_file"
+        ) && let Some(path) = extract_filepath(arguments)
+        {
             self.turn_files.insert(path);
         }
     }
@@ -292,7 +296,7 @@ impl UiState {
         name: String,
         arguments: String,
     ) -> usize {
-        self.note_tool_started(&arguments);
+        self.note_tool_started(&name, &arguments);
         self.messages.push(UiMessage::ToolCall(ToolCallMsg {
             tool_call_id,
             name,
@@ -355,7 +359,6 @@ fn extract_filepath(arguments: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
     value
         .get("filepath")
-        .or_else(|| value.get("path"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
 }
@@ -598,7 +601,8 @@ mod tests {
         );
         assert_eq!(
             extract_filepath(r#"{"path": "src/b.rs"}"#),
-            Some("src/b.rs".to_string())
+            None,
+            "generic path keys (e.g. schedule_task condition.path) must not count as changed files"
         );
         assert_eq!(extract_filepath(r#"{"command": "ls"}"#), None);
         assert_eq!(extract_filepath("not json"), None);
@@ -608,16 +612,22 @@ mod tests {
     fn turn_summary_counts_files() {
         let mut ui = UiState::new();
         ui.reset_turn();
-        ui.note_tool_started(r#"{"filepath": "a.rs"}"#);
+        ui.note_tool_started("edit_existing_file", r#"{"filepath": "a.rs"}"#);
         ui.note_tool_finished("diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n+x\n-y\n");
-        ui.note_tool_started(r#"{"filepath": "a.rs"}"#);
+        ui.note_tool_started("edit_existing_file", r#"{"filepath": "a.rs"}"#);
         ui.note_tool_finished("diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n+z\n");
-        ui.note_tool_started(r#"{"command": "cargo test"}"#);
+        ui.note_tool_started("read_file", r#"{"filepath": "unrelated.rs"}"#);
+        ui.note_tool_finished("contents of unrelated.rs");
+        ui.note_tool_started("run_terminal_command", r#"{"command": "cargo test"}"#);
         ui.note_tool_finished("ok");
-        assert_eq!(ui.turn_files.len(), 1);
+        assert_eq!(
+            ui.turn_files.len(),
+            1,
+            "read-only and shell tools must not count as changed files"
+        );
         assert_eq!(ui.turn_added, 2);
         assert_eq!(ui.turn_removed, 1);
-        assert_eq!(ui.turn_tool_calls, 3);
+        assert_eq!(ui.turn_tool_calls, 4);
         ui.finish_turn();
         let summary = match ui.messages.last() {
             Some(UiMessage::Summary(s)) => s.clone(),
