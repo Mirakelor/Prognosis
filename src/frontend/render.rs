@@ -862,7 +862,6 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
     let buffer = &ui.input.buffer;
     let normalized = buffer.replace('\r', "\n");
     let cursor_byte = char_index_to_byte(buffer, ui.input.cursor);
-    let lines: Vec<&str> = normalized.split('\n').collect();
     let cursor_line = normalized[..cursor_byte].matches('\n').count();
     let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
@@ -882,16 +881,46 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
             )]));
         }
     }
-    frame.render_widget(Paragraph::new(rendered), area);
+    let (row_index, x_offset) = input_cursor_position(
+        &normalized,
+        cursor_line,
+        cursor_in_line,
+        area.width as usize,
+    );
+    frame.render_widget(Paragraph::new(rendered.clone()), area);
+    let visible_rows = area.height as usize;
+    let scroll_offset = row_index.saturating_sub(visible_rows.saturating_sub(1));
+    if scroll_offset > 0 {
+        frame.render_widget(
+            Paragraph::new(rendered).scroll((scroll_offset as u16, 0)),
+            area,
+        );
+    }
+    let x = area
+        .x
+        .saturating_add(if row_index == 0 { 2 } else { 0 })
+        .saturating_add(x_offset as u16);
+    let cursor_row = row_index.saturating_sub(scroll_offset);
+    let y = (area.y + cursor_row as u16).min(area.bottom().saturating_sub(1));
+    frame.set_cursor_position((x.min(area.right().saturating_sub(1)), y));
+}
+
+fn input_cursor_position(
+    normalized: &str,
+    cursor_line: usize,
+    cursor_in_line: usize,
+    width: usize,
+) -> (usize, usize) {
+    let lines: Vec<&str> = normalized.split('\n').collect();
     let before: String = lines[cursor_line].chars().take(cursor_in_line).collect();
     let mut row_index = 0usize;
     for (idx, line) in lines[..cursor_line].iter().enumerate() {
-        row_index += wrapped_line_count(line, area.width as usize, idx == 0);
+        row_index += wrapped_line_count(line, width, idx == 0);
     }
     let inner_width = if cursor_line == 0 {
-        (area.width as usize).saturating_sub(2).max(4)
+        width.saturating_sub(2).max(4)
     } else {
-        (area.width as usize).max(4)
+        width.max(4)
     };
     let mut row_within = 0usize;
     let mut current = 0usize;
@@ -906,12 +935,7 @@ fn draw_input(frame: &mut Frame, ui: &UiState, area: Rect) {
     row_index += row_within;
     let x_offset = unicode_width::UnicodeWidthStr::width(before.as_str())
         .saturating_sub(row_within * inner_width);
-    let x = area
-        .x
-        .saturating_add(if row_index == 0 { 2 } else { 0 })
-        .saturating_add(x_offset as u16);
-    let y = (area.y + row_index as u16).min(area.bottom().saturating_sub(1));
-    frame.set_cursor_position((x.min(area.right().saturating_sub(1)), y));
+    (row_index, x_offset)
 }
 
 fn wrapped_input_rows(buffer: &str, width: usize) -> Vec<String> {
@@ -1550,6 +1574,53 @@ mod tests {
     #[test]
     fn fit_path_shows_full_when_fits() {
         assert_eq!(fit_path("/a/b.rs", 10), "/a/b.rs");
+    }
+
+    #[test]
+    fn input_cursor_after_multiline_paste_lands_on_last_line() {
+        let text = "line one\nline two\nline three";
+        let mut ui = UiState::new();
+        crate::frontend::input::insert_text(&mut ui.input, text);
+        assert_eq!(
+            ui.input.cursor,
+            text.chars().count(),
+            "cursor must sit at the end of the pasted text"
+        );
+        let normalized = ui.input.buffer.replace('\r', "\n");
+        let cursor_byte = char_index_to_byte(&ui.input.buffer, ui.input.cursor);
+        let cursor_line = normalized[..cursor_byte].matches('\n').count();
+        let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+        let (row, col) = input_cursor_position(
+            &normalized,
+            cursor_line,
+            cursor_in_line,
+            80,
+        );
+        assert_eq!(cursor_line, 2, "cursor must be on the third line");
+        assert_eq!(cursor_in_line, "line three".chars().count());
+        assert_eq!(row, 2, "cursor row must match the last line");
+        assert_eq!(col, "line three".chars().count());
+    }
+
+    #[test]
+    fn input_cursor_wraps_long_line_within_row() {
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        let mut ui = UiState::new();
+        crate::frontend::input::insert_text(&mut ui.input, text);
+        let normalized = ui.input.buffer.replace('\r', "\n");
+        let cursor_byte = char_index_to_byte(&ui.input.buffer, ui.input.cursor);
+        let cursor_line = normalized[..cursor_byte].matches('\n').count();
+        let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+        let (row, col) = input_cursor_position(
+            &normalized,
+            cursor_line,
+            cursor_in_line,
+            20,
+        );
+        assert_eq!(row, 1, "26 chars at width 20 must wrap to a second row");
+        assert_eq!(col, 8, "second row shows the remaining 8 chars (first row holds 18)");
     }
 
     #[test]
