@@ -1033,7 +1033,7 @@ impl App {
             .map(|turn| turn.content.as_str())
             .collect();
         tool_lines.reverse();
-        tool_lines.truncate(10);
+        tool_lines.truncate(20);
         tool_lines.reverse();
         let meta = self.next_meta();
         self.runtime.publish(Event::RestoreDialogue {
@@ -1621,7 +1621,7 @@ impl App {
         let summary_line = format!(
             "{name}({}) -> {} [{verdict}]",
             truncate(&arguments.to_string(), TRACE_ARG_LIMIT),
-            truncate(&output, 300)
+            output
         );
         self.remember.append_turn("tool", &summary_line);
         let meta2 = self.next_meta();

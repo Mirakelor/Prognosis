@@ -16,6 +16,8 @@ use crate::runtime::types::{
     WorkingMemorySnapshot,
 };
 
+const RECENT_TOOL_RESULTS: usize = 20;
+
 #[derive(serde::Deserialize)]
 struct TrajectoryJson {
     #[serde(default)]
@@ -53,6 +55,7 @@ pub struct PredictionActor {
     session_summary: String,
     last_messages: Vec<Message>,
     tool_rounds: Vec<ToolRound>,
+    tool_history: Vec<ToolRound>,
     stray_results: Vec<(String, String)>,
     executed_tools: Vec<(String, String)>,
     current_task: String,
@@ -76,6 +79,7 @@ impl PredictionActor {
             session_summary: String::new(),
             last_messages: Vec::new(),
             tool_rounds: Vec::new(),
+            tool_history: Vec::new(),
             stray_results: Vec::new(),
             executed_tools: Vec::new(),
             current_task: String::new(),
@@ -244,11 +248,11 @@ impl PredictionActor {
             .map(|slot| slot.content.clone())
             .collect::<Vec<_>>();
         let tool_result_text = self
-            .wm_snapshot
-            .slots
+            .tool_history
             .iter()
-            .filter(|slot| slot.source == "ToolResult")
-            .map(|slot| slot.content.clone())
+            .chain(self.tool_rounds.iter())
+            .filter(|round| round.output.is_some())
+            .map(|round| round.output.as_deref().unwrap_or_default())
             .collect::<Vec<_>>()
             .join("\n");
         let mut system = "You are a cognitive coding agent running inside the user's project directory. You act like a careful senior engineer: you read before you write, you verify before you claim, and you keep the user's goal in front of you at all times. A prediction-coding control system monitors your own uncertainty and injects explicit signals when something genuinely needs verification — without such a signal, answer fluently and act on what you already know.\
@@ -396,6 +400,30 @@ impl PredictionActor {
                 "(Previous tool activity — tools that already ran in this session; they are done, so do not re-run them without a new reason:\n{}\n)",
                 self.restored_tools.join("\n")
             )));
+        }
+        if !self.tool_rounds.is_empty() || !self.tool_history.is_empty() {
+            let listed = self
+                .tool_history
+                .iter()
+                .chain(self.tool_rounds.iter())
+                .filter(|round| round.output.is_some())
+                .rev()
+                .take(RECENT_TOOL_RESULTS)
+                .map(|round| {
+                    format!(
+                        "- {}({}) -> {}",
+                        round.name,
+                        round.arguments,
+                        round.output.as_deref().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !listed.is_empty() {
+                messages.push(Message::system(format!(
+                    "(Recent tool results — the full outputs of tools executed in this session; treat them as your evidence base, and do not re-run a tool whose result is already listed here:\n{listed}\n)"
+                )));
+            }
         }
         for turn in &self.wm_snapshot.dialogue {
             messages.push(Message::user(turn.user.clone()));
@@ -576,7 +604,7 @@ impl CognitiveActor for PredictionActor {
                         self.batch_generated = false;
                     }
                     _ => {
-                        self.tool_rounds.clear();
+                        self.tool_history.extend(self.tool_rounds.drain(..));
                         self.stray_results.clear();
                     }
                 }
@@ -668,6 +696,7 @@ impl CognitiveActor for PredictionActor {
                 self.session_summary = summary.clone();
                 self.wm_snapshot.dialogue.clear();
                 self.tool_rounds.clear();
+                self.tool_history.clear();
                 self.stray_results.clear();
                 self.last_messages.clear();
                 self.restored_tools.clear();
@@ -675,6 +704,15 @@ impl CognitiveActor for PredictionActor {
             }
             Event::MemoryInject { summary, .. } => {
                 self.session_summary = summary.clone();
+                vec![]
+            }
+            Event::ConversationCleared { .. } => {
+                self.tool_rounds.clear();
+                self.tool_history.clear();
+                self.stray_results.clear();
+                self.executed_tools.clear();
+                self.last_messages.clear();
+                self.batch_generated = false;
                 vec![]
             }
             Event::ContextUpdate { rules, skills, .. } => {
@@ -1147,66 +1185,67 @@ mod tests {
         assert!(system.contains("refactor: Refactor with confidence"), "{system}");
     }
 
-    #[tokio::test]
-    async fn auto_attach_rule_matches_tool_result_only() {
-        let bus = EventBus::new(32);
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let port: Arc<dyn LlmPort> = Arc::new(TrajectoryPort {
-            requests: requests.clone(),
-        });
-        let (_llm, llm_ready) =
-            spawn_actor(bus.clone(), crate::runtime::llm_actor::LlmActor::new(port.clone()));
-        let (_h, ready) = spawn_actor(bus.clone(), PredictionActor::new(port));
-        llm_ready.await.unwrap();
-        ready.await.unwrap();
-        let mut rx = Box::pin(bus.subscribe_kinds(&[EventKind::Prediction]));
-
-        bus.publish(Event::ContextUpdate {
-            meta: meta(),
-            rules: vec![rule(
-                "hooks",
-                "Use named exports for hooks",
-                "",
-                "",
-                "useEffect",
-                None,
-            )],
-            skills: vec![],
-        });
-        bus.publish(Event::WorkingMemoryUpdate {
-            meta: meta(),
-            snapshot: WorkingMemorySnapshot {
-                slots: vec![crate::runtime::types::WorkingMemorySlot {
-                    id: 1,
-                    content: "(Tool read_file result)\nimport { useEffect } from 'react'".into(),
-                    source: "ToolResult".into(),
-                    activation: 1.0,
-                }],
-                dialogue: vec![],
-            },
-        });
-        bus.publish(attention_event("the user typed useEffect in chat"));
-        let _ = tokio::time::timeout(Duration::from_secs(2), rx.next())
-            .await
-            .unwrap()
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let recorded = requests.lock().unwrap();
-        let generation = recorded
-            .iter()
-            .rev()
-            .find(|req| {
-                !req.messages[0]
-                    .content
-                    .to_plain_text()
-                    .contains("predictor for a cognitive agent")
-            })
-            .expect("a main generation request should exist");
-        let system = generation.messages[0].content.to_plain_text();
+    #[test]
+    fn auto_attach_rule_matches_tool_result_only() {
+        let mut actor = PredictionActor::new(Arc::new(FailingPort));
+        actor.rules = vec![rule(
+            "hooks",
+            "Use named exports for hooks",
+            "",
+            "",
+            "useEffect",
+            None,
+        )];
+        actor.tool_rounds = vec![ToolRound {
+            id: "call_1".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"filepath": "component.tsx"}),
+            reasoning: None,
+            content: String::new(),
+            output: Some("import { useEffect } from 'react'".into()),
+        }];
+        let request = actor.build_generate("test");
+        let system = request.messages[0].content.to_plain_text();
         assert!(
             system.contains("Use named exports for hooks"),
             "rule must activate from tool result content: {system}"
+        );
+    }
+
+    #[test]
+    fn build_generate_injects_recent_tool_results_in_full() {
+        let mut actor = PredictionActor::new(Arc::new(FailingPort));
+        actor.tool_history = vec![ToolRound {
+            id: "call_1".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"filepath": "a.rs"}),
+            reasoning: None,
+            content: String::new(),
+            output: Some("fn main() {}".into()),
+        }];
+        actor.tool_rounds = vec![ToolRound {
+            id: "call_2".into(),
+            name: "ls".into(),
+            arguments: serde_json::json!({"dirPath": "."}),
+            reasoning: None,
+            content: String::new(),
+            output: None,
+        }];
+        let request = actor.build_generate("test");
+        let text: String = request
+            .messages
+            .iter()
+            .map(|m| m.content.to_plain_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("Recent tool results — the full outputs of tools executed in this session"),
+            "tool results must be injected with a labeled header: {text}"
+        );
+        assert!(text.contains("fn main() {}"), "full output must be injected: {text}");
+        assert!(
+            !text.contains("- ls("),
+            "rounds without output must be skipped: {text}"
         );
     }
 

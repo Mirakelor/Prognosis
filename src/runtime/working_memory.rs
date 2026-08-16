@@ -50,9 +50,17 @@ impl WorkingMemoryActor {
     }
 
     fn insert(&mut self, focus: AttentionFocus) {
+        let content = if focus.payload.source == PerceptionSource::ToolResult {
+            format!(
+                "Salient tool result ({}) — this result was surprising relative to the prediction; its full output is in the recent tool results section.",
+                tool_name_from(&focus.payload.content)
+            )
+        } else {
+            focus.payload.content.clone()
+        };
         let slot = WorkingMemorySlot {
             id: self.next_id,
-            content: focus.payload.content.clone(),
+            content,
             source: format!("{:?}", focus.payload.source),
             activation: 1.0,
         };
@@ -69,6 +77,14 @@ impl WorkingMemoryActor {
             self.slots[min_idx] = slot;
         }
     }
+}
+
+fn tool_name_from(content: &str) -> String {
+    content
+        .strip_prefix("(Tool ")
+        .and_then(|rest| rest.split(" result").next())
+        .unwrap_or("tool")
+        .to_string()
 }
 
 impl Default for WorkingMemoryActor {
@@ -281,6 +297,51 @@ mod tests {
             Event::WorkingMemoryUpdate { snapshot, .. } => {
                 assert_eq!(snapshot.slots.len(), 1);
                 assert_eq!(snapshot.slots[0].content, "important topic");
+            }
+            _ => panic!("expected working memory update"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_result_slot_stores_reminder_not_full_output() {
+        let bus = EventBus::new(16);
+        let (_h, ready) = spawn_actor(bus.clone(), WorkingMemoryActor::new());
+        ready.await.unwrap();
+        let mut rx = Box::pin(bus.subscribe_kinds(&[EventKind::WorkingMemory]));
+
+        bus.publish(Event::Attention {
+            meta: meta(),
+            focus: AttentionFocus {
+                payload: PerceptionPayload {
+                    source: PerceptionSource::ToolResult,
+                    content: "(Tool read_file result)\nfn main() {}".into(),
+                    salience: 0.8,
+                },
+                salience: 0.8,
+                relevance: 0.8,
+            },
+        });
+        bus.publish(cycle_complete_event());
+        bus.publish(rpe_event(0.6));
+
+        let update = tokio::time::timeout(Duration::from_secs(2), rx.next())
+            .await
+            .unwrap()
+            .unwrap();
+        match update {
+            Event::WorkingMemoryUpdate { snapshot, .. } => {
+                assert_eq!(snapshot.slots.len(), 1);
+                assert!(
+                    snapshot.slots[0].content.contains("Salient tool result (read_file)"),
+                    "slot must be a salience reminder naming the tool: {}",
+                    snapshot.slots[0].content
+                );
+                assert!(
+                    !snapshot.slots[0].content.contains("fn main()"),
+                    "slot must not duplicate the full output: {}",
+                    snapshot.slots[0].content
+                );
+                assert_eq!(snapshot.slots[0].source, "ToolResult");
             }
             _ => panic!("expected working memory update"),
         }
