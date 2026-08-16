@@ -60,7 +60,7 @@ pub fn handle_event(ui: &mut UiState, event: Event) -> Option<Event> {
         Event::ToolResult { result, verdict, .. } => {
             let status = if result.output.contains("user denied the tool call") {
                 ToolStatus::Denied
-            } else if matches!(verdict.as_deref(), Some("blocked") | Some("corrected")) {
+            } else if matches!(verdict.as_deref(), Some("blocked")) {
                 ToolStatus::Errored
             } else {
                 ToolStatus::Done
@@ -359,6 +359,44 @@ mod tests {
         });
         match &ui.messages[0] {
             UiMessage::ToolCall(call) => assert_eq!(call.status, ToolStatus::Denied),
+            _ => panic!("expected tool call message"),
+        }
+    }
+
+    #[test]
+    fn corrected_result_marks_done_not_errored() {
+        let mut ui = UiState::new();
+        let _ = handle_event(&mut ui, Event::ActionSelected {
+            meta: meta(),
+            decision: ActionDecision {
+                candidate: ActionCandidate::CallTool {
+                    name: "grep_search".into(),
+                    arguments: serde_json::json!({"query": "useEffect"}),
+                    tool_call_id: Some("call_3".into()),
+                    reasoning: None,
+                },
+                confidence: 0.9,
+                go: true,
+            },
+        });
+        handle_event(&mut ui, Event::ToolResult {
+            meta: meta(),
+            result: ToolResult {
+                name: "grep_search".into(),
+                output: "(Tool call corrected by supervisor: the original grep_search call was repaired and executed instead as grep_search({\"query\": \"useEffect\", \"path\": \"src\"}) — review this result with the corrected call in mind)\n./src/a.tsx:  useEffect".into(),
+                tool_call_id: Some("call_3".into()),
+            },
+            verdict: Some("corrected".into()),
+        });
+        match &ui.messages[0] {
+            UiMessage::ToolCall(call) => {
+                assert_eq!(
+                    call.status,
+                    ToolStatus::Done,
+                    "a corrected call executed successfully and must not render as errored"
+                );
+                assert_eq!(call.verdict.as_deref(), Some("corrected"));
+            }
             _ => panic!("expected tool call message"),
         }
     }

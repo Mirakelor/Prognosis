@@ -102,7 +102,7 @@ fn run_terminal_command_description() -> String {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into())
     );
     format!(
-        "Run a terminal command in the project directory and return its output.\n\nGuidelines:\n- Each invocation starts a fresh shell with NO memory of previous commands; chain dependent commands in a single call (e.g. 'cd dir && make test').\n- Prefer dedicated tools over shell commands: use the file tools for reading and editing files; use the shell only for builds, tests, git operations, and other actions that have no dedicated tool.\n- NEVER use shell commands (sed, awk, perl, etc.) to edit files.\n- When a command runs in the background (waitForCompletion=false), ALWAYS suggest stopping it with a shell command (e.g. 'kill <pid>' or 'pkill -f <name>'); NEVER suggest Ctrl+C.\n- When you suggest follow-up shell commands, always format them as shell code blocks.\n- Do NOT run commands that require special/admin privileges.\n- Prefer '&&' chaining over separate calls when the second command depends on the first.\n- The command runs with the project directory as its working directory but is NOT limited to it: it can access paths outside the project (e.g. ~/Desktop) when the dedicated file tools cannot reach them. Such usage is legitimate when the target is outside the project; the tool still asks for your approval before running.\n{platform_info}"
+        "Run a terminal command in the project directory and return its output.\n\nGuidelines:\n- Each invocation starts a fresh shell with NO memory of previous commands; chain dependent commands in a single call (e.g. 'cd dir && make test').\n- Prefer dedicated tools over shell commands: use the file tools for reading and editing files; use the shell only for builds, tests, git operations, and other actions that have no dedicated tool.\n- Read-only inspection with the shell is acceptable for precise verification: sed/awk/cat on a specific line range, cat -A for invisible characters — when the dedicated tools would return the whole file or cannot show the needed detail.\n- NEVER use shell commands (sed, awk, perl, etc.) to edit files.\n- When a command runs in the background (waitForCompletion=false), ALWAYS suggest stopping it with a shell command (e.g. 'kill <pid>' or 'pkill -f <name>'); NEVER suggest Ctrl+C.\n- When you suggest follow-up shell commands, always format them as shell code blocks.\n- Do NOT run commands that require special/admin privileges.\n- Prefer '&&' chaining over separate calls when the second command depends on the first.\n- The command runs with the project directory as its working directory but is NOT limited to it: it can access paths outside the project (e.g. ~/Desktop) when the dedicated file tools cannot reach them. Such usage is legitimate when the target is outside the project; the tool still asks for your approval before running.\n{platform_info}"
     )
 }
 
@@ -745,7 +745,7 @@ pub struct App {
 }
 
 const TRACE_ARG_LIMIT: usize = 200;
-const TRACE_OUTPUT_LIMIT: usize = 400;
+const TRACE_OUTPUT_LIMIT: usize = 8000;
 const MAX_SUPERVISE_BLOCKS: u32 = 5;
 const MAX_TOOL_ROUNDS: u32 = 200;
 
