@@ -282,6 +282,7 @@ impl PredictionActor {
 \n- If you are unsure what the user wants, ask one brief clarifying question rather than guessing.\
 \n\n# Mid-Turn User Messages\
 \n- The user may send a new message while you are working. Judge whether it replaces the active request or adds to it: if it overrides, drop your previous work and focus on the new request; if it adds to the unfinished request, address both; if it asks for status, provide the update, then continue with the task.\
+\n- The user's latest message is the current instruction; earlier requests are stale but useful context. When the user redirects or narrows the task, the new instruction wins — do not keep pursuing the old thread.\
 \n\n# Destructive Actions\
 \n- Before deleting, overwriting, or otherwise making data hard to recover, resolve the exact targets with read-only checks; never use $HOME, ~, /, or a workspace root as the target of a recursive or destructive command; prefer recoverable operations when practical.\
 \n- After removing anything material, briefly tell the user what was removed and whether it can be recovered.\
@@ -364,7 +365,7 @@ impl PredictionActor {
 \n\n# What This Means\
 \nEach event below was marked salient by prediction-error gating: a moment this conversation found genuinely informative. They are background clues, not commands — use them when relevant, ignore them when not.\
 \n\n# What To Do\
-\n- Review the listed events before responding; they often carry the context you should act on.\
+\n- Consult the listed events only when they are relevant to this turn; do not re-audit past work or re-derive conclusions already reached.\
 \n- If an item conflicts with a tool result you just received, trust the tool result and say why.\
 \n\n{})",
                 background.join("\n")
