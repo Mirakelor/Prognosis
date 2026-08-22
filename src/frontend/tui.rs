@@ -16,6 +16,7 @@ use crate::frontend::commands::{self, Action};
 use crate::frontend::messages;
 use crate::frontend::render::{self, GitInfo};
 use crate::frontend::state::{Mode, SelectorKind, SetupState, UiMessage, UiState};
+use crate::frontend::state::{PROVIDER_CHOICES, PROVIDER_FIELD};
 use crate::runtime::event::Event;
 use crate::runtime::types::ActionCandidate;
 
@@ -415,13 +416,21 @@ async fn handle_key(
 ) -> Result<(), Box<dyn Error>> {
     match event {
         TermEvent::Paste(text) => {
-            if matches!(ui.mode, Mode::Chat | Mode::Command) {
-                crate::frontend::input::insert_text(&mut ui.input, &text);
-                if ui.input.buffer.starts_with('/') {
-                    ui.mode = Mode::Command;
-                } else {
-                    ui.mode = Mode::Chat;
+            match ui.mode {
+                Mode::Chat | Mode::Command => {
+                    crate::frontend::input::insert_text(&mut ui.input, &text);
+                    if ui.input.buffer.starts_with('/') {
+                        ui.mode = Mode::Command;
+                    } else {
+                        ui.mode = Mode::Chat;
+                    }
                 }
+                Mode::Setup => {
+                    if let Some(setup) = &mut ui.setup {
+                        setup_paste(setup, &text);
+                    }
+                }
+                _ => {}
             }
             Ok(())
         }
@@ -437,9 +446,15 @@ async fn handle_key_event(
     spawned: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), Box<dyn Error>> {
     if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if ui.mode == Mode::Setup {
+            return Ok(());
+        }
         return Err("quit".into());
     }
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if ui.mode == Mode::Setup {
+            return Ok(());
+        }
         if ui.is_generating() {
             ui.cancelled = true;
             ui.pending_tool_calls.clear();
@@ -797,6 +812,7 @@ async fn handle_setup_key(
     };
     match key.code {
         KeyCode::Char(_c) if key.modifiers.contains(KeyModifiers::CONTROL) => {}
+        KeyCode::Char(_) if setup.active == PROVIDER_FIELD => {}
         KeyCode::Char(c) => {
             let value = &mut setup.fields[setup.active].1;
             let cursor = setup.cursor.min(value.chars().count());
@@ -810,12 +826,20 @@ async fn handle_setup_key(
             setup.error = None;
         }
         KeyCode::Left => {
-            setup.cursor = setup.cursor.saturating_sub(1);
+            if setup.active == PROVIDER_FIELD {
+                cycle_provider(setup, -1);
+            } else {
+                setup.cursor = setup.cursor.saturating_sub(1);
+            }
         }
         KeyCode::Right => {
-            let len = setup.fields[setup.active].1.chars().count();
-            if setup.cursor < len {
-                setup.cursor += 1;
+            if setup.active == PROVIDER_FIELD {
+                cycle_provider(setup, 1);
+            } else {
+                let len = setup.fields[setup.active].1.chars().count();
+                if setup.cursor < len {
+                    setup.cursor += 1;
+                }
             }
         }
         KeyCode::Home => {
@@ -892,6 +916,42 @@ async fn handle_setup_key(
         _ => {}
     }
     Ok(())
+}
+
+fn cycle_provider(setup: &mut SetupState, delta: isize) {
+    let current = setup.fields[PROVIDER_FIELD].1.clone();
+    let index = PROVIDER_CHOICES
+        .iter()
+        .position(|(name, _, _)| *name == current)
+        .unwrap_or(0);
+    let next = ((index as isize + delta).rem_euclid(PROVIDER_CHOICES.len() as isize)) as usize;
+    let (_, name_default, url_default) = PROVIDER_CHOICES[index];
+    let (next_name, next_name_default, next_url_default) = PROVIDER_CHOICES[next];
+    setup.fields[PROVIDER_FIELD].1 = next_name.to_string();
+    if setup.fields[0].1 == name_default {
+        setup.fields[0].1 = next_name_default.to_string();
+    }
+    if setup.fields[2].1 == url_default {
+        setup.fields[2].1 = next_url_default.to_string();
+    }
+    setup.error = None;
+}
+
+fn setup_paste(setup: &mut SetupState, text: &str) {
+    let cleaned: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+    if cleaned.is_empty() {
+        return;
+    }
+    let value = &mut setup.fields[setup.active].1;
+    let cursor = setup.cursor.min(value.chars().count());
+    let byte = value
+        .char_indices()
+        .nth(cursor)
+        .map(|(byte, _)| byte)
+        .unwrap_or(value.len());
+    value.insert_str(byte, &cleaned);
+    setup.cursor = cursor + cleaned.chars().count();
+    setup.error = None;
 }
 
 async fn handle_chat_key(
@@ -1072,4 +1132,103 @@ async fn run_command(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> SetupState {
+        SetupState {
+            fields: vec![
+                ("name".to_string(), "deepseek-v4-flash".to_string()),
+                ("provider".to_string(), "deepseek".to_string()),
+                ("base_url".to_string(), "https://api.deepseek.com".to_string()),
+                ("api_key".to_string(), String::new()),
+            ],
+            active: 0,
+            cursor: 0,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn provider_cycles_and_carries_defaults() {
+        let mut s = setup();
+        s.active = PROVIDER_FIELD;
+        cycle_provider(&mut s, 1);
+        assert_eq!(s.fields[1].1, "openai");
+        assert_eq!(s.fields[0].1, "gpt-4o");
+        assert_eq!(s.fields[2].1, "https://api.openai.com/v1");
+        cycle_provider(&mut s, 1);
+        assert_eq!(s.fields[1].1, "deepseek");
+        assert_eq!(s.fields[0].1, "deepseek-v4-flash");
+        assert_eq!(s.fields[2].1, "https://api.deepseek.com");
+    }
+
+    #[test]
+    fn provider_cycle_keeps_customized_name() {
+        let mut s = setup();
+        s.fields[0].1 = "my-model".into();
+        s.active = PROVIDER_FIELD;
+        cycle_provider(&mut s, 1);
+        assert_eq!(s.fields[1].1, "openai");
+        assert_eq!(s.fields[0].1, "my-model", "custom name must survive");
+        assert_eq!(s.fields[2].1, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn provider_cycle_keeps_customized_url() {
+        let mut s = setup();
+        s.fields[2].1 = "https://proxy.example.com".into();
+        s.active = PROVIDER_FIELD;
+        cycle_provider(&mut s, 1);
+        assert_eq!(s.fields[1].1, "openai");
+        assert_eq!(s.fields[0].1, "gpt-4o");
+        assert_eq!(s.fields[2].1, "https://proxy.example.com", "custom url must survive");
+    }
+
+    #[test]
+    fn provider_cycle_wraps_both_directions() {
+        let mut s = setup();
+        s.active = PROVIDER_FIELD;
+        cycle_provider(&mut s, -1);
+        assert_eq!(s.fields[1].1, "openai");
+        cycle_provider(&mut s, -1);
+        assert_eq!(s.fields[1].1, "deepseek");
+    }
+
+    #[test]
+    fn paste_strips_newlines_and_lands_cursor_at_end() {
+        let mut s = setup();
+        s.active = 3;
+        s.fields[3].1 = "sk-ab".into();
+        s.cursor = 5;
+        setup_paste(&mut s, "cd\r\nef\r\n");
+        assert_eq!(s.fields[3].1, "sk-abcdef");
+        assert_eq!(s.cursor, 9);
+        assert!(s.error.is_none());
+    }
+
+    #[test]
+    fn paste_inserts_at_cursor_in_middle() {
+        let mut s = setup();
+        s.active = 3;
+        s.fields[3].1 = "sk-zz".into();
+        s.cursor = 4;
+        setup_paste(&mut s, "MM");
+        assert_eq!(s.fields[3].1, "sk-zMMz");
+        assert_eq!(s.cursor, 6);
+    }
+
+    #[test]
+    fn paste_into_provider_field_is_a_noop_for_newlines_only() {
+        let mut s = setup();
+        s.active = PROVIDER_FIELD;
+        s.fields[1].1 = "deepseek".into();
+        s.cursor = 8;
+        setup_paste(&mut s, "\r\n");
+        assert_eq!(s.fields[1].1, "deepseek", "empty paste must not touch the field");
+        assert_eq!(s.cursor, 8);
+    }
 }

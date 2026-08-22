@@ -118,6 +118,13 @@ pub struct SetupState {
     pub error: Option<String>,
 }
 
+pub const PROVIDER_FIELD: usize = 1;
+
+pub const PROVIDER_CHOICES: [(&str, &str, &str); 2] = [
+    ("deepseek", "deepseek-v4-flash", "https://api.deepseek.com"),
+    ("openai", "gpt-4o", "https://api.openai.com/v1"),
+];
+
 pub struct UiState {
     pub messages: Vec<UiMessage>,
     pub streaming: Option<usize>,

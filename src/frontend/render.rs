@@ -4,7 +4,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use crate::frontend::commands;
 use crate::frontend::markdown::{self, SpanKind};
 use crate::frontend::select;
-use crate::frontend::state::{Mode, ToolStatus, UiMessage, UiState};
+use crate::frontend::state::{Mode, ToolStatus, UiMessage, UiState, PROVIDER_CHOICES, PROVIDER_FIELD};
 use crate::frontend::theme;
 
 const REASONING_FOLD_LINES: usize = 6;
@@ -933,8 +933,10 @@ fn input_cursor_position(
         current += w;
     }
     row_index += row_within;
-    let x_offset = unicode_width::UnicodeWidthStr::width(before.as_str())
-        .saturating_sub(row_within * inner_width);
+    // The cursor's x is the width accumulated on its wrapped row, not
+    // width(before) - row_within * inner_width, which drifts when a wide char
+    // wraps before the row is full.
+    let x_offset = current;
     (row_index, x_offset)
 }
 
@@ -1229,6 +1231,37 @@ fn draw_setup(frame: &mut Frame, ui: &UiState, area: Rect) {
         } else {
             theme::text_style()
         };
+        if index == PROVIDER_FIELD {
+            if active {
+                let column = 2 + label.chars().count() as u16 + 2;
+                cursor_pos = Some((content.len() as u16 + 1, column));
+            }
+            let mut spans = vec![
+                Span::styled(prefix, label_style),
+                Span::styled(format!("{label}: "), label_style),
+            ];
+            for (i, (name, _, _)) in PROVIDER_CHOICES.iter().enumerate() {
+                let chosen = *name == value.as_str();
+                let style = if chosen {
+                    Style::default().fg(theme::PINK).bold()
+                } else {
+                    theme::meta_style()
+                };
+                spans.push(Span::styled(
+                    if chosen {
+                        format!("[{name}]")
+                    } else {
+                        name.to_string()
+                    },
+                    style,
+                ));
+                if i + 1 < PROVIDER_CHOICES.len() {
+                    spans.push(Span::raw("  "));
+                }
+            }
+            content.push(Line::from(spans));
+            continue;
+        }
         if active {
             let before: String = value.chars().take(setup.cursor).collect();
             let column = 2 + label.chars().count() as u16 + 2
@@ -1248,7 +1281,7 @@ fn draw_setup(frame: &mut Frame, ui: &UiState, area: Rect) {
         )));
     }
     content.push(Line::from(Span::styled(
-        "Enter: Next Field / Finish · ↑↓ : Move · Esc: Cancel",
+        "Enter: Next Field / Finish · ↑↓ : Move · ←→ : Choose Provider · Ctrl+Shift+V: Paste · Esc: Cancel",
         theme::meta_style(),
     )));
     let max_width = content
@@ -1621,6 +1654,54 @@ mod tests {
         );
         assert_eq!(row, 1, "26 chars at width 20 must wrap to a second row");
         assert_eq!(col, 8, "second row shows the remaining 8 chars (first row holds 18)");
+    }
+
+    #[test]
+    fn input_cursor_x_is_correct_after_wrap_with_wide_chars() {
+        // 17 ASCII + 3 CJK at width 20: first row inner width is 18, so the first
+        // CJK char wraps and the second row holds 中中中 = 6 display columns.
+        let text = "aaaaaaaaaaaaaaaaa中中中";
+        let mut ui = UiState::new();
+        crate::frontend::input::insert_text(&mut ui.input, text);
+        let normalized = ui.input.buffer.replace('\r', "\n");
+        let cursor_byte = char_index_to_byte(&ui.input.buffer, ui.input.cursor);
+        let cursor_line = normalized[..cursor_byte].matches('\n').count();
+        let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+        let (row, col) = input_cursor_position(&normalized, cursor_line, cursor_in_line, 20);
+        assert_eq!(row, 1, "the first CJK char must wrap to the second row");
+        assert_eq!(col, 6, "second row holds 中中中 = 6 columns");
+    }
+
+    #[test]
+    fn input_cursor_x_after_wrap_mid_wide_run() {
+        // Cursor right after the first CJK char: it sits at column 2 of row 1.
+        let text = "aaaaaaaaaaaaaaaaa中";
+        let mut ui = UiState::new();
+        crate::frontend::input::insert_text(&mut ui.input, text);
+        let normalized = ui.input.buffer.replace('\r', "\n");
+        let cursor_byte = char_index_to_byte(&ui.input.buffer, ui.input.cursor);
+        let cursor_line = normalized[..cursor_byte].matches('\n').count();
+        let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+        let (row, col) = input_cursor_position(&normalized, cursor_line, cursor_in_line, 20);
+        assert_eq!(row, 1);
+        assert_eq!(col, 2, "the wrapped CJK char starts at column 2 of row 1");
+    }
+
+    #[test]
+    fn input_cursor_x_after_multiline_paste_with_wide_chars() {
+        let text = "中中中\n中中中";
+        let mut ui = UiState::new();
+        crate::frontend::input::insert_text(&mut ui.input, text);
+        let normalized = ui.input.buffer.replace('\r', "\n");
+        let cursor_byte = char_index_to_byte(&ui.input.buffer, ui.input.cursor);
+        let cursor_line = normalized[..cursor_byte].matches('\n').count();
+        let line_start = normalized[..cursor_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let cursor_in_line = normalized[line_start..cursor_byte].chars().count();
+        let (row, col) = input_cursor_position(&normalized, cursor_line, cursor_in_line, 20);
+        assert_eq!(row, 1, "cursor sits on the second logical line");
+        assert_eq!(col, 6, "第二行是 3 个全角字符，光标在 6 列");
     }
 
     #[test]

@@ -605,7 +605,7 @@ impl CognitiveActor for PredictionActor {
                         self.batch_generated = false;
                     }
                     _ => {
-                        self.tool_history.extend(self.tool_rounds.drain(..));
+                        self.tool_history.append(&mut self.tool_rounds);
                         self.stray_results.clear();
                     }
                 }
